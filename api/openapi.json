@@ -1202,6 +1202,12 @@
           "score_breakdown": {
             "$ref": "#/components/schemas/ScoreBreakdown"
           },
+          "evidence_completeness": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Evidence Completeness"
+          },
           "match_reasons": {
             "items": {
               "type": "string"
@@ -1231,6 +1237,7 @@
           "title",
           "relevance_score",
           "score_breakdown",
+          "evidence_completeness",
           "match_reasons",
           "limitations",
           "citations"
@@ -1301,38 +1308,60 @@
       "ScoreBreakdown": {
         "properties": {
           "objective_match": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Objective Match"
           },
           "parameter_similarity": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Parameter Similarity"
           },
           "measurement_usefulness": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Measurement Usefulness"
           },
           "context_hardware": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Context Hardware"
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "objective_match",
-          "parameter_similarity",
-          "measurement_usefulness",
-          "context_hardware"
-        ],
         "title": "ScoreBreakdown"
       },
       "Source": {
