@@ -112,10 +112,10 @@ class ScenarioRequest(APIModel):
 
 
 class ScoreBreakdown(APIModel):
-    objective_match: float = Field(ge=0, le=1)
-    parameter_similarity: float = Field(ge=0, le=1)
-    measurement_usefulness: float = Field(ge=0, le=1)
-    context_hardware: float = Field(ge=0, le=1)
+    objective_match: float | None = Field(default=None, ge=0, le=1)
+    parameter_similarity: float | None = Field(default=None, ge=0, le=1)
+    measurement_usefulness: float | None = Field(default=None, ge=0, le=1)
+    context_hardware: float | None = Field(default=None, ge=0, le=1)
 
 
 class ScenarioMatch(APIModel):
@@ -123,6 +123,7 @@ class ScenarioMatch(APIModel):
     title: str
     relevance_score: float = Field(ge=0, le=100)
     score_breakdown: ScoreBreakdown
+    evidence_completeness: float = Field(ge=0, le=1)
     match_reasons: list[str]
     limitations: list[str]
     citations: list[SourceCitation]

@@ -95,10 +95,10 @@ export interface ScenarioRequest {
 }
 
 export interface ScoreBreakdown {
-  objective_match: number;
-  parameter_similarity: number;
-  measurement_usefulness: number;
-  context_hardware: number;
+  objective_match: number | null;
+  parameter_similarity: number | null;
+  measurement_usefulness: number | null;
+  context_hardware: number | null;
 }
 
 export interface ScenarioMatch {
@@ -106,6 +106,7 @@ export interface ScenarioMatch {
   title: string;
   relevance_score: number;
   score_breakdown: ScoreBreakdown;
+  evidence_completeness: number;
   match_reasons: string[];
   limitations: string[];
   citations: SourceCitation[];

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   api,
+  type ChatResponse,
   type ComparisonResponse,
   type HealthResponse,
   type Investigation,
@@ -53,7 +54,7 @@ function App() {
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [report, setReport] = useState<ReportResponse | null>(null);
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
+  const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -253,13 +254,15 @@ function App() {
       {route === "assistant" && (
         <AssistantPage
           question={question}
-          answer={answer}
+          selectedIds={selectedIds}
+          response={chatResponse}
           setQuestion={setQuestion}
           busy={busy}
           onAsk={(event) => {
             event.preventDefault();
-            void run(() => api.chat({ question }), (result) =>
-              setAnswer(result.answer),
+            void run(
+              () => api.chat({ question, investigation_ids: selectedIds }),
+              setChatResponse,
             );
           }}
         />
@@ -632,12 +635,16 @@ function ScenarioResults({
             </div>
             <p>{match.match_reasons.join(" ")}</p>
             <small>
-              Objective {match.score_breakdown.objective_match.toFixed(2)} ·
-              Parameters {match.score_breakdown.parameter_similarity.toFixed(2)} ·
-              Measurements {match.score_breakdown.measurement_usefulness.toFixed(2)} ·
-              Context/hardware {match.score_breakdown.context_hardware.toFixed(2)}
+              Objective (40%) {formatScore(match.score_breakdown.objective_match)} ·
+              Parameters (30%) {formatScore(match.score_breakdown.parameter_similarity)} ·
+              Measurements (20%) {formatScore(match.score_breakdown.measurement_usefulness)} ·
+              Context/hardware (10%) {formatScore(match.score_breakdown.context_hardware)}
             </small>
+            <p className="muted small">
+              Evidence completeness: {Math.round(match.evidence_completeness * 100)}%
+            </p>
             <CitationList citations={match.citations} />
+            <NoticeList title="Record limitations" items={match.limitations} />
           </article>
         ))
       ) : (
@@ -652,6 +659,10 @@ function ScenarioResults({
       />
     </div>
   );
+}
+
+function formatScore(value: number | null): string {
+  return value === null ? "Unavailable" : value.toFixed(2);
 }
 
 function ComparePage({
@@ -727,13 +738,15 @@ function ComparePage({
 
 function AssistantPage({
   question,
-  answer,
+  selectedIds,
+  response,
   setQuestion,
   busy,
   onAsk,
 }: {
   question: string;
-  answer: string;
+  selectedIds: string[];
+  response: ChatResponse | null;
   setQuestion: (value: string) => void;
   busy: boolean;
   onAsk: (event: React.FormEvent<HTMLFormElement>) => void;
@@ -754,8 +767,19 @@ function AssistantPage({
           FLARE AI only answers when verified source excerpts are indexed. It
           will identify unavailable evidence rather than inventing an answer.
         </p>
+        <p>
+          {selectedIds.length
+            ? `Using ${selectedIds.length} selected investigation${selectedIds.length === 1 ? "" : "s"} as context.`
+            : "No investigations selected; questions use the indexed catalog."}
+        </p>
       </div>
-      {answer && <div className="chat-answer">{answer}</div>}
+      {response && (
+        <div className="chat-answer">
+          <p>{response.answer}</p>
+          <CitationList citations={response.citations} />
+          <NoticeList title="Limitations" items={response.limitations} />
+        </div>
+      )}
       <form className="chat-form" onSubmit={onAsk}>
         <label className="sr-only" htmlFor="research-question">
           Research question
