@@ -9,6 +9,7 @@ ResearchArea = Literal[
 ]
 Environment = Literal["microgravity", "normal_gravity", "other", "unknown"]
 DataAvailability = Literal["metadata_only", "documents", "numeric_dataset", "unknown"]
+SourceVerificationStatus = Literal["verified", "unverified", "unavailable"]
 ScenarioEnvironment = Literal[
     "lunar_habitat", "mars_habitat", "spacecraft", "spacesuit", "custom"
 ]
@@ -53,6 +54,15 @@ class Source(APIModel):
     page_number: int | None = Field(default=None, ge=1)
     section: str | None = None
     source_type: Literal["NASA_PSI", "NASA_REPORT", "NASA_DATASET", "OTHER"]
+    local_file_path: str | None = None
+    downloaded_at: datetime | None = None
+    sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$"
+    )
+    file_size_bytes: int | None = Field(default=None, ge=0)
+    mime_type: str | None = None
+    last_verified_at: datetime | None = None
+    verification_status: SourceVerificationStatus = "unverified"
 
     @field_validator("source_url")
     @classmethod
@@ -69,6 +79,12 @@ class SourceCitation(APIModel):
     page_number: int | None = None
     section: str | None = None
     quote_or_supported_excerpt: str | None = None
+    local_file_path: str | None = None
+    downloaded_at: datetime | None = None
+    sha256: str | None = None
+    file_size_bytes: int | None = Field(default=None, ge=0)
+    mime_type: str | None = None
+    verification_status: SourceVerificationStatus = "unverified"
 
     @field_validator("source_url")
     @classmethod

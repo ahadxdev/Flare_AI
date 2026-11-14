@@ -872,6 +872,14 @@ function RecordDetail({ item }: { item: Investigation }) {
             : `${item.conditions.pressure.value} ${item.conditions.pressure.unit}`
         }
       />
+      <Info
+        label="Additional conditions"
+        value={item.conditions.other.join(" ")}
+      />
+      <Info
+        label="Last verified"
+        value={item.last_verified_at ?? ""}
+      />
       <Info label="Hardware" value={item.hardware.join(", ")} />
       <Info label="Sensors" value={item.sensors.join(", ")} />
       <Info
@@ -961,6 +969,10 @@ function CitationList({
           </a>
           {citation.page_number && <span> · p. {citation.page_number}</span>}
           {citation.section && <span> · {citation.section}</span>}
+          <span> · {citation.verification_status}</span>
+          {citation.local_file_path && (
+            <span> · original file preserved</span>
+          )}
         </li>
       ))}
     </ul>

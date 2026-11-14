@@ -56,6 +56,15 @@ def test_comparison_report_and_measurements(seeded_client: TestClient) -> None:
     assert seeded_client.get("/api/measurements").json() == {"items": []}
 
 
+def test_investigation_api_exposes_source_provenance(seeded_client: TestClient) -> None:
+    response = seeded_client.get("/api/investigations/test-only-combustion")
+    assert response.status_code == 200
+    source = response.json()["sources"][0]
+    assert source["source_id"] == "test-only-source"
+    assert source["verification_status"] == "unverified"
+    assert source["local_file_path"] is None
+
+
 def test_source_linked_measurement_import(seeded_app, test_investigation) -> None:
     measurement = Measurement(
         measurement_id="test-only-measurement",

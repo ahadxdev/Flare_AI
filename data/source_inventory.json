@@ -1,0 +1,151 @@
+{
+  "inventory_verified_at": "2026-11-14T00:00:00Z",
+  "sources": [
+    {
+      "source_id": "src-nasa-combustion-areas",
+      "source_url": "https://www.nasa.gov/physical-sciences-informatics-psi/psi-investigations-by-research-area/",
+      "document_title": "PSI Investigations by Research Area",
+      "source_type": "NASA_PSI",
+      "scope": "Official NASA page listing the Combustion Science portfolio, including BASS, FLEX, SAFFIRE-I, SAFFIRE-II and related investigations.",
+      "downloadable_dataset": false,
+      "notes": "Used for official investigation names and research-area membership; technical details come from the cited NTRS reports."
+    },
+    {
+      "source_id": "src-ntrs-saffire-status",
+      "source_url": "https://ntrs.nasa.gov/api/citations/20170000230/downloads/20170000230.pdf",
+      "document_title": "Operation and Development Status of the Spacecraft Fire Experiments (Saffire)",
+      "source_type": "NASA_REPORT",
+      "scope": "NASA Technical Reports Server abstract covering the Saffire-I, -II and -III objectives, low-gravity context and Cygnus operations.",
+      "downloadable_dataset": false,
+      "notes": "The abstract does not provide a scalar oxygen or pressure value, so those fields remain null.",
+      "local_file_path": "data/raw/nasa/20170000230.pdf",
+      "downloaded_at": "2026-11-14T10:33:30.061869+00:00",
+      "sha256": "34c6a5a3a2f3dcca7eec796596dee842a59d029635416cbf5b4916516bd7218c",
+      "file_size_bytes": 556175,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.682909+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-ntrs-bass-ii",
+      "source_url": "https://ntrs.nasa.gov/api/citations/20210011385/downloads/TM-20210011385.pdf",
+      "document_title": "Burning and Suppression of Solids-II (BASS-II) Summary Report",
+      "source_type": "NASA_REPORT",
+      "scope": "NASA Technical Reports Server abstract describing BASS-II hardware, sensors, tested variables and reported results.",
+      "downloadable_dataset": true,
+      "notes": "The report is linked as a document source; no local copy is included unless manually archived through the ingestion CLI.",
+      "investigation_ids": [
+        "psi-bass-ii"
+      ],
+      "verification_status": "unavailable",
+      "failure_reason": "The public server reported 48,972,416 bytes, but the transfer ended at 41,054,208 bytes and the server did not support byte-range resume.",
+      "manual_action": "Download the PDF manually from the source URL and verify its SHA-256."
+    },
+    {
+      "source_id": "src-ntrs-flex",
+      "source_url": "https://ntrs.nasa.gov/api/citations/20130014061/downloads/20130014061.pdf",
+      "document_title": "Methanol Droplet Combustion in Oxygen-Inert Environments in Microgravity",
+      "source_type": "NASA_REPORT",
+      "scope": "NASA Technical Reports Server abstract describing FLEX methanol tests, oxygen range, pressure range, diluents and measured variables.",
+      "downloadable_dataset": true,
+      "notes": "Ranges are retained as text because the canonical condition fields represent scalar values.",
+      "local_file_path": "data/raw/nasa/20130014061.pdf",
+      "downloaded_at": "2026-11-14T10:51:50.048102+00:00",
+      "sha256": "1488bbb461f2ea0f97c2c2fab6ac0a01603a6837509ab6ac6d1ef02bbf72050b",
+      "file_size_bytes": 2314383,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.693339+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-ntrs-flex-results",
+      "source_url": "https://ntrs.nasa.gov/api/citations/20150023456/downloads/20150023456.pdf",
+      "document_title": "Detailed Results from the Flame Extinguishment Experiment (FLEX) March 2009 to December 2011",
+      "source_type": "NASA_REPORT",
+      "scope": "NASA Technical Reports Server abstract describing the FLEX apparatus, diagnostics, procedures and 284 tests.",
+      "downloadable_dataset": true,
+      "notes": "The record links the report only; it does not claim that a numeric dataset was downloaded.",
+      "local_file_path": "data/raw/nasa/20150023456.pdf",
+      "downloaded_at": "2026-11-14T10:55:16.796137+00:00",
+      "sha256": "b4f6ca983e2792c33a0b92220a791a818f426bb635b94f7fd33dc8c9c471e79d",
+      "file_size_bytes": 42900650,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.855888+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-psi-98",
+      "source_url": "https://psi.nasa.gov/physci/repo/data/investigations/PSI-98",
+      "document_title": "NASA PSI investigation PSI-98",
+      "source_type": "NASA_PSI",
+      "scope": "NASA PSI investigation landing page for SAFFIRE-I.",
+      "downloadable_dataset": "unknown",
+      "notes": "PSI requires interactive repository access; the pipeline does not scrape or assume a downloadable dataset."
+    },
+    {
+      "source_id": "src-psi-99",
+      "source_url": "https://psi.nasa.gov/physci/repo/data/investigations/PSI-99",
+      "document_title": "NASA PSI investigation PSI-99",
+      "source_type": "NASA_PSI",
+      "scope": "NASA PSI investigation landing page for SAFFIRE-II.",
+      "downloadable_dataset": "unknown",
+      "notes": "PSI requires interactive repository access; the pipeline does not scrape or assume a downloadable dataset."
+    },
+    {
+      "source_id": "src-space-apps-flame-in-freefall",
+      "source_url": "https://www.spaceappschallenge.org/2026/challenges/flame-in-freefall/",
+      "document_title": "Flame in Freefall",
+      "source_type": "OTHER",
+      "scope": "Official NASA Space Apps Challenge resource describing the challenge context.",
+      "downloadable_dataset": false,
+      "notes": "Challenge context only; it is not used as an investigation record."
+    },
+    {
+      "source_id": "src-nasa-bps-psi-listing",
+      "source_url": "https://science.nasa.gov/biological-physical/data/",
+      "document_title": "BPS Data and Repositories",
+      "source_type": "NASA_PSI",
+      "scope": "Official NASA BPS data landing page and PSI repository entry point.",
+      "downloadable_dataset": false,
+      "notes": "Repository navigation resource, not a scientific data record."
+    },
+    {
+      "source_id": "src-nasa-psi-repository",
+      "source_url": "https://psi.nasa.gov/physci/repo/",
+      "document_title": "NASA PSI Data Repository",
+      "source_type": "NASA_PSI",
+      "scope": "Official NASA PSI repository landing page for manual follow-up and curation.",
+      "downloadable_dataset": "unknown",
+      "notes": "The repository may require interactive access; ingestion does not scrape it or assume downloads."
+    },
+    {
+      "source_id": "src-ntrs-bass-metadata",
+      "source_url": "https://ntrs.nasa.gov/api/citations/20210011385",
+      "document_title": "NASA NTRS citation metadata for BASS-II",
+      "source_type": "NASA_REPORT",
+      "scope": "Official NASA NTRS citation metadata preserved locally for BASS-II after the large PDF transfer was incomplete.",
+      "downloadable_dataset": false,
+      "notes": "Metadata file is preserved and verified; the linked BASS-II PDF remains unavailable locally.",
+      "local_file_path": "data/raw/nasa/20210011385.json",
+      "downloaded_at": "2026-11-14T10:58:08.292380+00:00",
+      "sha256": "3fcf1e93014a6c0e210bc77714c5a7f95b0ccbedb7e28390184e051d517ab9e9",
+      "file_size_bytes": 7042,
+      "mime_type": "application/json",
+      "last_verified_at": "2026-11-14T10:58:37.684229+00:00",
+      "verification_status": "verified"
+    }
+  ],
+  "unavailable_sources": [
+    {
+      "source_id": "src-ntrs-bass-ii",
+      "investigation_ids": [
+        "psi-bass-ii"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20210011385/downloads/TM-20210011385.pdf",
+      "document_title": "Burning and Suppression of Solids-II (BASS-II) Summary Report",
+      "verification_status": "unavailable",
+      "failure_reason": "The public server reported 48,972,416 bytes, but the transfer ended at 41,054,208 bytes and the server did not support byte-range resume.",
+      "manual_action": "Download the PDF manually from the source URL and verify its SHA-256."
+    }
+  ]
+}

@@ -130,6 +130,12 @@ class SQLiteResearchService:
                 source_url=source.source_url,
                 page_number=source.page_number,
                 section=source.section,
+                local_file_path=source.local_file_path,
+                downloaded_at=source.downloaded_at,
+                sha256=source.sha256,
+                file_size_bytes=source.file_size_bytes,
+                mime_type=source.mime_type,
+                verification_status=source.verification_status,
             )
             for item in items
             for source in item.sources
@@ -250,6 +256,12 @@ def _score_investigation(
             source_url=source.source_url,
             page_number=source.page_number,
             section=source.section,
+            local_file_path=source.local_file_path,
+            downloaded_at=source.downloaded_at,
+            sha256=source.sha256,
+            file_size_bytes=source.file_size_bytes,
+            mime_type=source.mime_type,
+            verification_status=source.verification_status,
         )
         for source in investigation.sources
     ]

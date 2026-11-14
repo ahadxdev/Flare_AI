@@ -1,0 +1,83 @@
+{
+  "generated_at": "2026-11-14T10:58:37.858751+00:00",
+  "sources": [
+    {
+      "source_id": "src-ntrs-saffire-status",
+      "investigation_ids": [
+        "psi-98",
+        "psi-99"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20170000230/downloads/20170000230.pdf",
+      "document_title": "Operation and Development Status of the Spacecraft Fire Experiments (Saffire)",
+      "file_name": "20170000230.pdf",
+      "local_file_path": "data/raw/nasa/20170000230.pdf",
+      "downloaded_at": "2026-11-14T10:33:30.061869+00:00",
+      "sha256": "34c6a5a3a2f3dcca7eec796596dee842a59d029635416cbf5b4916516bd7218c",
+      "file_size_bytes": 556175,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.682909+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-ntrs-bass-metadata",
+      "investigation_ids": [
+        "psi-bass-ii"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20210011385",
+      "document_title": "NASA NTRS citation metadata for BASS-II",
+      "file_name": "20210011385.json",
+      "mime_type": "application/json",
+      "local_file_path": "data/raw/nasa/20210011385.json",
+      "downloaded_at": "2026-11-14T10:58:08.292380+00:00",
+      "sha256": "3fcf1e93014a6c0e210bc77714c5a7f95b0ccbedb7e28390184e051d517ab9e9",
+      "file_size_bytes": 7042,
+      "last_verified_at": "2026-11-14T10:58:37.684229+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-ntrs-flex",
+      "investigation_ids": [
+        "psi-flex"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20130014061/downloads/20130014061.pdf",
+      "document_title": "Methanol Droplet Combustion in Oxygen-Inert Environments in Microgravity",
+      "file_name": "20130014061.pdf",
+      "local_file_path": "data/raw/nasa/20130014061.pdf",
+      "downloaded_at": "2026-11-14T10:51:50.048102+00:00",
+      "sha256": "1488bbb461f2ea0f97c2c2fab6ac0a01603a6837509ab6ac6d1ef02bbf72050b",
+      "file_size_bytes": 2314383,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.693339+00:00",
+      "verification_status": "verified"
+    },
+    {
+      "source_id": "src-ntrs-flex-results",
+      "investigation_ids": [
+        "psi-flex"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20150023456/downloads/20150023456.pdf",
+      "document_title": "Detailed Results from the Flame Extinguishment Experiment (FLEX) March 2009 to December 2011",
+      "file_name": "20150023456.pdf",
+      "local_file_path": "data/raw/nasa/20150023456.pdf",
+      "downloaded_at": "2026-11-14T10:55:16.796137+00:00",
+      "sha256": "b4f6ca983e2792c33a0b92220a791a818f426bb635b94f7fd33dc8c9c471e79d",
+      "file_size_bytes": 42900650,
+      "mime_type": "application/pdf",
+      "last_verified_at": "2026-11-14T10:58:37.855888+00:00",
+      "verification_status": "verified"
+    }
+  ],
+  "unavailable_sources": [
+    {
+      "source_id": "src-ntrs-bass-ii",
+      "investigation_ids": [
+        "psi-bass-ii"
+      ],
+      "source_url": "https://ntrs.nasa.gov/api/citations/20210011385/downloads/TM-20210011385.pdf",
+      "document_title": "Burning and Suppression of Solids-II (BASS-II) Summary Report",
+      "verification_status": "unavailable",
+      "failure_reason": "The public server reported 48,972,416 bytes, but the transfer ended at 41,054,208 bytes and the server did not support byte-range resume.",
+      "manual_action": "Download the PDF manually from the source URL and verify its SHA-256."
+    }
+  ]
+}

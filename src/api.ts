@@ -17,6 +17,7 @@ export type DataAvailability =
   | "documents"
   | "numeric_dataset"
   | "unknown";
+export type SourceVerificationStatus = "verified" | "unverified" | "unavailable";
 
 export type ScenarioEnvironment =
   | "lunar_habitat"
@@ -50,6 +51,9 @@ export interface InvestigationSource {
   page_number: number | null;
   section: string | null;
   source_type: "NASA_PSI" | "NASA_REPORT" | "NASA_DATASET" | "OTHER";
+  local_file_path: string | null;
+  mime_type: string | null;
+  verification_status: SourceVerificationStatus;
 }
 
 export interface SourceCitation {
@@ -59,6 +63,9 @@ export interface SourceCitation {
   page_number: number | null;
   section: string | null;
   quote_or_supported_excerpt: string | null;
+  local_file_path: string | null;
+  mime_type: string | null;
+  verification_status: SourceVerificationStatus;
 }
 
 export interface Investigation {
