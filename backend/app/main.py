@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import Settings
+from app.chat_provider import OpenAICompatibleChatProvider
 from app.errors import APIError
 from app.logging_config import configure_logging
 from app.models import ErrorResponse
@@ -50,8 +51,17 @@ def create_app(
         lifespan=lifespan,
     )
     if research_service is None:
+        chat_provider = None
+        if config.llm_api_key and config.llm_model:
+            chat_provider = OpenAICompatibleChatProvider(
+                api_key=config.llm_api_key,
+                model=config.llm_model,
+                base_url=config.llm_base_url,
+                timeout_seconds=config.llm_timeout_seconds,
+            )
         research_service = SQLiteResearchService(
-            SQLiteStore(database_path or config.database_path)
+            SQLiteStore(database_path or config.database_path),
+            chat_provider=chat_provider,
         )
     app.state.research_service = research_service
     app.add_middleware(

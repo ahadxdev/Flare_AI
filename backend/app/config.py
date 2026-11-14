@@ -1,3 +1,4 @@
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,10 @@ class Settings:
     cors_allow_credentials: bool
     log_level: str
     database_path: Path
+    llm_api_key: str | None
+    llm_model: str | None
+    llm_base_url: str
+    llm_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -47,6 +52,22 @@ class Settings:
         log_level = os.getenv("FLARE_LOG_LEVEL", "INFO").upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ValueError("FLARE_LOG_LEVEL must be a valid logging level.")
+        llm_api_key = os.getenv("FLARE_LLM_API_KEY", "").strip() or None
+        llm_model = os.getenv("FLARE_LLM_MODEL", "").strip() or None
+        if (llm_api_key is None) != (llm_model is None):
+            raise ValueError(
+                "FLARE_LLM_API_KEY and FLARE_LLM_MODEL must both be set or both be empty."
+            )
+        try:
+            llm_timeout_seconds = float(
+                os.getenv("FLARE_LLM_TIMEOUT_SECONDS", "20")
+            )
+        except ValueError as exc:
+            raise ValueError("FLARE_LLM_TIMEOUT_SECONDS must be numeric.") from exc
+        if not math.isfinite(llm_timeout_seconds) or not 0 < llm_timeout_seconds <= 120:
+            raise ValueError(
+                "FLARE_LLM_TIMEOUT_SECONDS must be greater than 0 and at most 120."
+            )
         return cls(
             cors_origins=origins,
             cors_methods=_csv_setting(
@@ -60,4 +81,10 @@ class Settings:
             database_path=Path(
                 os.getenv("FLARE_DATABASE_PATH", str(DEFAULT_DATABASE))
             ),
+            llm_api_key=llm_api_key,
+            llm_model=llm_model,
+            llm_base_url=os.getenv(
+                "FLARE_LLM_BASE_URL", "https://api.openai.com/v1"
+            ).rstrip("/"),
+            llm_timeout_seconds=llm_timeout_seconds,
         )

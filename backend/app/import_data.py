@@ -31,6 +31,7 @@ def main() -> None:
         "--replace", action="store_true", help="Replace the existing local catalog"
     )
     args = parser.parse_args()
+<<<<<<< Updated upstream
     investigations, measurements, report = ingest(
         args.file, source_dir=args.source_dir, archive_dir=args.archive_dir
     )
@@ -47,9 +48,19 @@ def main() -> None:
             print(f"ERROR {issue.record}: {issue.message}")
         raise SystemExit(1)
     SQLiteStore().import_records(investigations, measurements, replace=args.replace)
+=======
+    investigations, measurements, evidence_excerpts = load_import_file(args.file)
+    SQLiteStore().import_records(
+        investigations,
+        measurements,
+        replace=args.replace,
+        evidence_excerpts=evidence_excerpts,
+    )
+>>>>>>> Stashed changes
     print(
         f"Imported {len(investigations)} investigations and "
-        f"{len(measurements)} measurements."
+        f"{len(measurements)} measurements and "
+        f"{len(evidence_excerpts)} evidence excerpts."
     )
 
 

@@ -1,7 +1,14 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 
 ResearchArea = Literal[
@@ -174,13 +181,70 @@ class ComparisonResponse(APIModel):
 
 class ChatRequest(APIModel):
     question: str = Field(min_length=1, max_length=4000)
+    scenario_id: str | None = Field(default=None, min_length=1, max_length=100)
     investigation_ids: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("investigation_ids")
+    @classmethod
+    def unique_investigations(cls, ids: list[str]) -> list[str]:
+        if len(set(ids)) != len(ids):
+            raise ValueError("Investigation IDs must be unique.")
+        return ids
+
+
+class EvidenceExcerpt(APIModel):
+    excerpt_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    excerpt: str = Field(min_length=1, max_length=6000)
+    page_number: int | None = Field(default=None, ge=1)
+    section: str | None = None
+
+
+class ChatEvidence(APIModel):
+    source_id: str
+    investigation_id: str
+    document_title: str
+    source_url: HttpUrl
+    page_number: int | None = None
+    section: str | None = None
+    excerpt: str
 
 
 class ChatResponse(APIModel):
     answer: str
+    evidence: list[ChatEvidence]
     citations: list[SourceCitation]
     limitations: list[str]
+    answer_status: Literal["grounded", "insufficient_evidence"]
+
+    @model_validator(mode="after")
+    def citations_must_reference_retrieved_evidence(self):
+        evidence_keys = {
+            (
+                item.source_id,
+                item.document_title,
+                str(item.source_url),
+                item.page_number,
+                item.section,
+                item.excerpt,
+            )
+            for item in self.evidence
+        }
+        for citation in self.citations:
+            citation_key = (
+                citation.source_id,
+                citation.document_title,
+                str(citation.source_url),
+                citation.page_number,
+                citation.section,
+                citation.quote_or_supported_excerpt,
+            )
+            if citation_key not in evidence_keys:
+                raise ValueError("Every citation must map to a retrieved evidence excerpt.")
+        if self.answer_status == "grounded" and (not self.evidence or not self.citations):
+            raise ValueError("Grounded answers require retrieved evidence and citations.")
+        return self
 
 
 class Measurement(APIModel):

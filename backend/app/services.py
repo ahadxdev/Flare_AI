@@ -1,10 +1,17 @@
 import math
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.chat_provider import (
+    ChatCompletionProvider,
+    ProviderAnswer,
+    ProviderError,
+)
 from app.errors import APIError
 from app.models import (
+    ChatEvidence,
     ChatRequest,
     ChatResponse,
     ComparisonRequest,
@@ -21,7 +28,10 @@ from app.models import (
     ScoreBreakdown,
     SourceCitation,
 )
-from app.store import SQLiteStore
+from app.store import EvidenceHit, SQLiteStore
+
+
+logger = logging.getLogger("flare.services")
 
 
 @dataclass(frozen=True)
@@ -83,10 +93,17 @@ class SQLiteResearchService:
     def __init__(
         self,
         store: SQLiteStore,
+<<<<<<< Updated upstream
         scoring_weights: RelevanceWeights = DEFAULT_RELEVANCE_WEIGHTS,
     ):
         self.store = store
         self.scoring_weights = scoring_weights
+=======
+        chat_provider: ChatCompletionProvider | None = None,
+    ):
+        self.store = store
+        self.chat_provider = chat_provider
+>>>>>>> Stashed changes
 
     def list_investigations(
         self,
@@ -140,7 +157,7 @@ class SQLiteResearchService:
             gaps.append("No investigations are available in indexed sources.")
         if not any(measurements_by_investigation.values()):
             gaps.append("Verified numeric measurements are not available in indexed sources.")
-        return ScenarioAnalysisResponse(
+        analysis = ScenarioAnalysisResponse(
             scenario_id=str(uuid.uuid4()),
             scenario=scenario,
             matches=matches,
@@ -151,6 +168,8 @@ class SQLiteResearchService:
                 "Microgravity evidence does not establish performance in lunar or Martian partial gravity.",
             ],
         )
+        self.store.save_scenario_analysis(analysis)
+        return analysis
 
     def compare(self, request: ComparisonRequest) -> ComparisonResponse:
         items = self.store.get_investigations(request.investigation_ids)
@@ -164,14 +183,172 @@ class SQLiteResearchService:
         )
 
     def chat(self, request: ChatRequest) -> ChatResponse:
+        scenario_analysis = None
+        scenario = None
+        allowed_ids: list[str] | None = None
         if request.investigation_ids:
             items = self.store.get_investigations(request.investigation_ids)
             if len(items) != len(request.investigation_ids):
                 raise APIError(404, "NOT_FOUND", "One or more investigations were not found.")
-        raise APIError(
-            422,
-            "NO_EVIDENCE",
-            "Not available in indexed sources: no verified document excerpts are indexed to answer this question.",
+            allowed_ids = list(request.investigation_ids)
+        if request.scenario_id is not None:
+            scenario_analysis = self.store.get_scenario_analysis(request.scenario_id)
+            if scenario_analysis is None:
+                raise APIError(404, "NOT_FOUND", "The requested scenario was not found.")
+            scenario = scenario_analysis.scenario
+            scenario_ids = [match.investigation_id for match in scenario_analysis.matches]
+            allowed_ids = (
+                [item_id for item_id in allowed_ids if item_id in scenario_ids]
+                if allowed_ids is not None
+                else scenario_ids[:100]
+            )
+
+        hits = self.store.search_evidence(
+            request.question,
+            investigation_ids=allowed_ids,
+        )
+        if not hits:
+            return self._insufficient_evidence(scenario is not None)
+
+        provider_failure: str | None = None
+        if self.chat_provider is None:
+            answer = self._evidence_only_answer(scenario is not None)
+            provider_failure = (
+                "The LLM provider is not configured; only retrieved excerpts are presented."
+            )
+        else:
+            try:
+                answer = self.chat_provider.answer(request.question, hits, scenario)
+            except (ProviderError, TimeoutError, OSError):
+                logger.warning(
+                    "Chat provider failed; returning evidence-only fallback",
+                    extra={"evidence_count": len(hits)},
+                )
+                answer = self._evidence_only_answer(scenario is not None)
+                provider_failure = (
+                    "The LLM provider timed out or failed; only retrieved excerpts are presented."
+                )
+        return self._grounded_response(
+            answer,
+            hits,
+            scenario is not None,
+            provider_failure=provider_failure,
+        )
+
+    def _insufficient_evidence(self, has_scenario: bool) -> ChatResponse:
+        scenario_relevance = (
+            "The scenario is a user-entered hypothetical; no indexed evidence was found "
+            "to assess its relevance."
+            if has_scenario
+            else "No scenario context was supplied."
+        )
+        answer = (
+            "Short answer: Not available in indexed sources.\n\n"
+            "Evidence: No relevant verified excerpts are indexed for this question.\n\n"
+            f"Relevance to the scenario: {scenario_relevance}\n\n"
+            "Limitations / research gaps: No answer is inferred without source evidence. "
+            "Microgravity evidence, when available, does not establish lunar or Martian "
+            "partial-gravity performance.\n\n"
+            "Sources: None retrieved."
+        )
+        return ChatResponse(
+            answer=answer,
+            evidence=[],
+            citations=[],
+            limitations=[
+                "Not available in indexed sources: no relevant verified excerpts were retrieved.",
+                "Specific investigation claims cannot be supported without indexed evidence.",
+                "Microgravity evidence does not establish lunar or Martian partial-gravity performance.",
+            ],
+            answer_status="insufficient_evidence",
+        )
+
+    def _evidence_only_answer(self, has_scenario: bool) -> ProviderAnswer:
+        relevance = (
+            "These excerpts provide research context only; they do not prove lunar or "
+            "Martian partial-gravity performance."
+            if has_scenario
+            else "No scenario context was supplied; relevance is not assessed."
+        )
+        return ProviderAnswer(
+            answer_status="grounded",
+            short_answer=(
+                "The retrieved excerpts are the available source evidence; no claim "
+                "beyond their text is inferred."
+            ),
+            scenario_relevance=relevance,
+            limitations=(
+                "This evidence-only response does not synthesize beyond the quoted excerpts. "
+                "Generated interpretation is not a NASA-reported fact."
+            ),
+        )
+
+    def _grounded_response(
+        self,
+        answer: ProviderAnswer,
+        hits: list[EvidenceHit],
+        has_scenario: bool,
+        provider_failure: str | None = None,
+    ) -> ChatResponse:
+        evidence = [
+            ChatEvidence(
+                source_id=hit.source.source_id,
+                investigation_id=hit.investigation.investigation_id,
+                document_title=hit.source.document_title,
+                source_url=hit.source.source_url,
+                page_number=hit.excerpt.page_number or hit.source.page_number,
+                section=hit.excerpt.section or hit.source.section,
+                excerpt=hit.excerpt.excerpt,
+            )
+            for hit in hits
+        ]
+        citations = [
+            SourceCitation(
+                source_id=item.source_id,
+                document_title=item.document_title,
+                source_url=item.source_url,
+                page_number=item.page_number,
+                section=item.section,
+                quote_or_supported_excerpt=item.excerpt,
+            )
+            for item in evidence
+        ]
+        limitations = [answer.limitations]
+        if provider_failure:
+            limitations.append(provider_failure)
+        if has_scenario:
+            limitations.append(
+                "Scenario values are user-entered assumptions, not NASA measurements."
+            )
+        if any(hit.investigation.environment == "microgravity" for hit in hits):
+            limitations.append(
+                "Microgravity evidence does not establish lunar or Martian partial-gravity performance."
+            )
+        limitations.append("Generated interpretation is not a NASA-reported fact.")
+        source_excerpts = "\n".join(
+            (
+                f'- {"NASA-reported" if hit.source.source_type.startswith("NASA_") else "Indexed"} '
+                f'excerpt [{hit.source.source_id}]: "{hit.excerpt.excerpt}"'
+            )
+            for hit in hits
+        )
+        sources = "\n".join(
+            f"- [{item.source_id}] {item.document_title} ({item.source_url})"
+            for item in evidence
+        )
+        formatted_answer = (
+            f"Short answer (interpretation): {answer.short_answer}\n\n"
+            f"Evidence (verbatim source excerpts):\n{source_excerpts}\n\n"
+            f"Relevance to the scenario (interpretation): {answer.scenario_relevance}\n\n"
+            f"Limitations / research gaps: {' '.join(limitations)}\n\n"
+            f"Sources:\n{sources}"
+        )
+        return ChatResponse(
+            answer=formatted_answer,
+            evidence=evidence,
+            citations=citations,
+            limitations=limitations,
+            answer_status=answer.answer_status,
         )
 
     def measurements(

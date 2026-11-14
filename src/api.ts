@@ -139,13 +139,26 @@ export interface ComparisonResponse {
 
 export interface ChatRequest {
   question: string;
+  scenario_id?: string | null;
   investigation_ids?: string[];
+}
+
+export interface ChatEvidence {
+  source_id: string;
+  investigation_id: string;
+  document_title: string;
+  source_url: string;
+  page_number: number | null;
+  section: string | null;
+  excerpt: string;
 }
 
 export interface ChatResponse {
   answer: string;
+  evidence: ChatEvidence[];
   citations: SourceCitation[];
   limitations: string[];
+  answer_status: "grounded" | "insufficient_evidence";
 }
 
 export interface Measurement {

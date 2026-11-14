@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.models import Investigation
+from app.models import EvidenceExcerpt, Investigation
 
 
 @pytest.fixture
@@ -27,6 +27,19 @@ def test_investigation() -> Investigation:
                 }
             ],
         }
+    )
+
+
+@pytest.fixture
+def test_evidence_excerpt() -> EvidenceExcerpt:
+    """Clearly labeled excerpt fixture used only by automated tests."""
+    return EvidenceExcerpt(
+        excerpt_id="test-only-excerpt",
+        investigation_id="test-only-combustion",
+        source_id="test-only-source",
+        excerpt="TEST FIXTURE: test cellulose flame spread under test conditions.",
+        page_number=2,
+        section="Test fixture",
     )
 
 

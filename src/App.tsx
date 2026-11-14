@@ -260,9 +260,18 @@ function App() {
           busy={busy}
           onAsk={(event) => {
             event.preventDefault();
+<<<<<<< Updated upstream
             void run(
               () => api.chat({ question, investigation_ids: selectedIds }),
               setChatResponse,
+=======
+            void run(() => api.chat({
+              question,
+              scenario_id: analysis?.scenario_id ?? null,
+              investigation_ids: [],
+            }), (result) =>
+              setAnswer(result.answer),
+>>>>>>> Stashed changes
             );
           }}
         />

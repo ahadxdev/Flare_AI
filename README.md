@@ -7,9 +7,15 @@ FLARE AI (Fire & Life-safety Analysis and Research Engine) is an evidence-first 
 - React, Vite, and TypeScript client for investigation browsing, record comparison, hypothetical scenario analysis, verified measurements, evidence-aware chat, and research briefs.
 - Modular FastAPI API with Pydantic request/response validation and consistent JSON errors.
 - Reusable canonical schemas in `backend/app/models.py`, service protocols and SQLite implementation in `backend/app/services.py`, and independently testable routers under `backend/app/routers/`.
+<<<<<<< Updated upstream
 - SQLite-backed canonical investigation and source-linked measurement catalog.
 - Preserved NASA NTRS source files under [`data/raw/nasa/`](./data/raw/nasa/) with
   SHA-256 manifests and explicit unavailable-source records.
+=======
+- SQLite-backed canonical investigation, source-linked measurement, and verified excerpt catalog.
+- Evidence-grounded chat retrieves excerpts by question terms, can narrow retrieval to selected investigations or a saved scenario, and builds citations only from retrieved source records.
+- Optional OpenAI-compatible chat provider configured through environment variables; unavailable or unconfigured providers fall back to verbatim evidence excerpts.
+>>>>>>> Stashed changes
 - Environment-configurable CORS and JSON-structured request/error logging.
 - Published OpenAPI contract at [`api/openapi.json`](./api/openapi.json); regenerate it after API changes with `cd backend && python export_openapi.py`.
 
@@ -18,6 +24,10 @@ FLARE AI (Fire & Life-safety Analysis and Research Engine) is an evidence-first 
 - Transparent relevance components for objective alignment, comparable oxygen/pressure metadata, numeric-data usefulness, and requested material/fuel context.
 - Empty catalog by default. This repository does not ship fabricated NASA records. The Moon Base example values (30% oxygen and 10.2 psi) are explicitly user-entered hypothetical assumptions.
 
+<<<<<<< Updated upstream
+=======
+The prototype has no NASA records or document excerpts bundled. Consequently, its initial investigation, measurement, and evidence lists are empty, scenarios return no matches, and chat returns `answer_status: "insufficient_evidence"` rather than guessing. The importer accepts canonical investigations, measurements, and source-linked verified excerpts; each measurement and excerpt must reference a source attached to its investigation. Test-only records are not loaded by the live application.
+>>>>>>> Stashed changes
 
 The starter catalog has investigation documents and metadata but no verified numeric dataset rows. The measurement list is therefore empty, and chat fails closed with `NO_EVIDENCE` until verified document excerpts can be indexed. The importer accepts canonical investigations and measurements; each measurement must reference a source already attached to its investigation.
 
@@ -47,6 +57,7 @@ The client runs at `http://localhost:5173`, proxies `/api` to FastAPI on port 80
 
 ## Import verified catalog records
 
+<<<<<<< Updated upstream
 The ingestion pipeline accepts manually curated JSON or CSV and normalizes it into the canonical models without scraping PSI. It assigns deterministic IDs when they are omitted (`psi-...`, `src-...`), validates enums, HTTPS provenance and measurement references, reports duplicates, and leaves unknown scientific values empty. If original source files are available, pass `--source-dir` and `--archive-dir`; files are copied byte-for-byte and SHA-256 hashes are recorded in the report.
 
 ```json
@@ -69,6 +80,15 @@ The ingestion pipeline accepts manually curated JSON or CSV and normalizes it in
     }
   ],
   "measurements": []
+=======
+Prepare a JSON file with canonical `investigations`, optional `measurements`, and optional `evidence_excerpts` arrays. Fields are validated against `backend/app/models.py`; every imported investigation must include at least one HTTPS source, and each measurement and excerpt must match a source ID on its investigation. Excerpts use the `EvidenceExcerpt` shape (`excerpt_id`, `investigation_id`, `source_id`, `excerpt`, optional `page_number` and `section`). Do not import unverified assumptions as source facts. Source URLs and IDs are preserved through API responses and reports.
+
+```json
+{
+  "investigations": [],
+  "measurements": [],
+  "evidence_excerpts": []
+>>>>>>> Stashed changes
 }
 ```
 
@@ -108,7 +128,9 @@ The shared response/request schema names are defined in `backend/app/models.py`.
 - `GET /api/measurements?investigation_id=&variable=`
 - `POST /api/reports`
 
-Validation errors, missing records, unavailable evidence, and internal errors use `{ "error": { "code", "message", "details" } }`.
+Validation errors, missing records, and internal errors use `{ "error": { "code", "message", "details" } }`. `POST /api/chat` returns a structured `insufficient_evidence` response with HTTP 200 when no matching excerpt is indexed. Its citations are generated from retrieved evidence and validated against the returned excerpts.
+
+To enable LLM synthesis, set `FLARE_LLM_API_KEY` and `FLARE_LLM_MODEL` in `.env`; optionally set `FLARE_LLM_BASE_URL` for an OpenAI-compatible endpoint and `FLARE_LLM_TIMEOUT_SECONDS` (1–120 seconds). Leave the key and model empty to use the evidence-only fallback. Provider timeouts or invalid responses also fall back to quoted retrieved excerpts; no provider output is trusted to supply citations.
 
 ## Tests and build
 
@@ -117,4 +139,4 @@ PYTHONPATH=backend pytest backend/tests -q
 npm run build
 ```
 
-`NO_EVIDENCE` from chat is an intentional safe response: the current catalog contract stores source links and metadata but not verified excerpts that can support an answer.
+Chat remains evidence-first: without relevant imported excerpts it reports that evidence is not available in indexed sources. If no provider is configured, retrieved excerpts are presented verbatim with provenance and limitations.

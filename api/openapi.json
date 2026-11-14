@@ -168,7 +168,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -231,7 +231,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -293,7 +293,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -355,7 +355,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -383,7 +383,7 @@
           "evidence"
         ],
         "summary": "Ask an evidence-grounded question",
-        "description": "Answers only from verified indexed excerpts. Returns NO_EVIDENCE when the catalog does not contain supporting excerpts.",
+        "description": "Retrieves verified excerpts and returns citations linked to those excerpts. When evidence is unavailable, returns answer_status=insufficient_evidence rather than guessing. Optional scenario context uses a prior scenario analysis.",
         "operationId": "chat_api_chat_post",
         "requestBody": {
           "content": {
@@ -417,7 +417,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -504,7 +504,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -566,7 +566,7 @@
             }
           },
           "422": {
-            "description": "Request validation or evidence error.",
+            "description": "Request validation failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -591,6 +591,65 @@
   },
   "components": {
     "schemas": {
+      "ChatEvidence": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "investigation_id": {
+            "type": "string",
+            "title": "Investigation Id"
+          },
+          "document_title": {
+            "type": "string",
+            "title": "Document Title"
+          },
+          "source_url": {
+            "type": "string",
+            "maxLength": 2083,
+            "minLength": 1,
+            "format": "uri",
+            "title": "Source Url"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "investigation_id",
+          "document_title",
+          "source_url",
+          "excerpt"
+        ],
+        "title": "ChatEvidence"
+      },
       "ChatRequest": {
         "properties": {
           "question": {
@@ -598,6 +657,19 @@
             "maxLength": 4000,
             "minLength": 1,
             "title": "Question"
+          },
+          "scenario_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Id"
           },
           "investigation_ids": {
             "items": {
@@ -621,6 +693,13 @@
             "type": "string",
             "title": "Answer"
           },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ChatEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
           "citations": {
             "items": {
               "$ref": "#/components/schemas/SourceCitation"
@@ -634,14 +713,24 @@
             },
             "type": "array",
             "title": "Limitations"
+          },
+          "answer_status": {
+            "type": "string",
+            "enum": [
+              "grounded",
+              "insufficient_evidence"
+            ],
+            "title": "Answer Status"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "answer",
+          "evidence",
           "citations",
-          "limitations"
+          "limitations",
+          "answer_status"
         ],
         "title": "ChatResponse"
       },

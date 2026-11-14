@@ -17,8 +17,9 @@ router = APIRouter(tags=["evidence"])
     responses={**ERROR_RESPONSES},
     summary="Ask an evidence-grounded question",
     description=(
-        "Answers only from verified indexed excerpts. Returns NO_EVIDENCE when "
-        "the catalog does not contain supporting excerpts."
+        "Retrieves verified excerpts and returns citations linked to those excerpts. "
+        "When evidence is unavailable, returns answer_status=insufficient_evidence "
+        "rather than guessing. Optional scenario context uses a prior scenario analysis."
     ),
 )
 def chat(
