@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "measurement_id": "fixture-chart-observation",
+      "investigation_id": "fixture-chart-study",
+      "variable": "FIXTURE synthetic observation - not NASA",
+      "value": 7.25,
+      "reported_value": "7.250",
+      "unit": "s",
+      "observation_context": {},
+      "source_id": "fixture-chart-source",
+      "document_title": "FIXTURE chart source - not NASA",
+      "source_url": "https://example.test/fixture-chart",
+      "page_number": null,
+      "section": null,
+      "table_reference": null,
+      "supporting_excerpt": null,
+      "extraction_method": "manual",
+      "confidence": null,
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "review_notes": null
+    }
+  ],
+  "data_availability": "numeric_dataset",
+  "message": "TEST FIXTURE ONLY: synthetic browser rendering probe, never imported by the demo or production backend."
+}

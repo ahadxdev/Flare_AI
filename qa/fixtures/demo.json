@@ -1,0 +1,13 @@
+{
+  "label": "FIXTURE / OFFLINE DEMO - source-backed subset, not a production catalog",
+  "catalog": "data/psi_starter.json",
+  "investigation_ids": ["psi-98", "psi-99", "psi-bass-ii", "psi-flex"],
+  "indexed_source_ids": ["src-ntrs-saffire-status", "src-ntrs-bass-metadata"],
+  "measurements": [],
+  "notes": [
+    "Scientific fields and stable IDs are copied unchanged from the curated catalog.",
+    "RAG uses locally verified SAFFIRE PDF and BASS-II metadata only; FLEX documents are not indexed in this small demo.",
+    "No measurements are seeded. Existing local databases are never read or replaced.",
+    "Moon Base inputs are hypothetical user assumptions, not NASA conditions."
+  ]
+}

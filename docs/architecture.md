@@ -197,6 +197,8 @@ detail record from the API. Scenario environment and the investigation
 `hardware` field are present in the contracts; confirm their intended role in
 ranking before changing or documenting that behavior as a requirement.
 
-No CI workflow, deployment configuration, charting library, or frontend
-test-runner configuration is tracked in the repository.
+No CI workflow, deployment configuration, or charting library is tracked.
+The [integration QA harness](qa.md) uses Playwright against disposable backend
+databases and a visibly labelled offline demo; its known-bug gates do not change
+application contracts or scientific records.
 Error: (query) Execution failed: Failed to get response from the AI model; retried 5 times (total retry wait time: 23.00 seconds) Last error: Failed native model HTTP request: error sending request for url (https://api.individual.githubcopilot.com/responses): client error (Connect): dns error: error resolving DNS: failed to lookup address information: Temporary failure in name resolution [ENOTFOUND]

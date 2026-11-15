@@ -36,6 +36,7 @@ defaults. Keep provider credentials out of version control.
 
 - [Architecture and current limitations](docs/architecture.md)
 - [Development and testing](docs/development.md)
+- [Integration QA, offline demo and smoke checklist](docs/qa.md)
 - [Numeric candidate extraction and review workflow](docs/development.md#extract-and-review-numeric-candidates)
 - [Four-member documentation workflow](docs/contributing.md)
 - [NASA data provenance audit](NASA_DATA_PROVENANCE_AUDIT.md)

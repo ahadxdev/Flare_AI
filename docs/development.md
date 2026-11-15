@@ -16,8 +16,9 @@ fetching NASA data on startup.
 
 Dependencies are declared in [requirements.txt](../requirements.txt),
 [requirements-dev.txt](../requirements-dev.txt), and
-[package.json](../package.json). There is no separate frontend test or lint
-script currently configured.
+[package.json](../package.json). Browser integration tests and the isolated
+offline demo are documented in [Integration QA](qa.md). No frontend lint script
+is configured.
 
 ## Configure and run
 
@@ -268,8 +269,10 @@ PYTHONPATH=backend pytest backend/tests -q
 npm run build
 ```
 
-There is no configured frontend unit/e2e test runner, linter, or CI workflow.
-Backend tests use temporary SQLite databases and test-only fixtures.
+Playwright browser integration checks, a smoke checklist, and strict known-bug
+gates are documented in [Integration QA](qa.md). No frontend unit-test runner,
+linter, or CI workflow is configured. Backend tests use temporary SQLite
+databases and test-only fixtures.
 
 When backend API models or routes change, regenerate the OpenAPI contract:
 
