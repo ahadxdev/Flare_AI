@@ -33,10 +33,14 @@ def chat(
     "/api/measurements",
     response_model=MeasurementList,
     responses={**ERROR_RESPONSES},
-    summary="List verified measurements",
+    summary="List verified numeric observations",
     description=(
-        "Returns source-linked numeric measurements only. Empty results mean no "
-        "verified matching measurements are indexed."
+        "Returns imported measurement rows, never staged candidates, when linked "
+        "to a verified NASA source record. Pipeline-extracted values reach this "
+        "store only after explicit review. Each point retains the reported value and unit, "
+        "document title, URL, available page/section, and supporting excerpt. "
+        "Pending candidates are never exposed. Empty data includes catalog "
+        "data_availability and an explanation; no sample values are generated."
     ),
 )
 def measurements(

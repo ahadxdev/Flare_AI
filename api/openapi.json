@@ -321,7 +321,7 @@
           "analysis"
         ],
         "summary": "Compare investigations",
-        "description": "Returns requested source-backed records for side-by-side comparison. Unavailable fields are not inferred.",
+        "description": "Compares at least two distinct indexed investigations field by field. Raw values and units are preserved; incomplete fields and incompatible pressure units are marked not comparable rather than converted or inferred.",
         "operationId": "compare_api_compare_post",
         "requestBody": {
           "content": {
@@ -444,8 +444,8 @@
         "tags": [
           "evidence"
         ],
-        "summary": "List verified measurements",
-        "description": "Returns source-linked numeric measurements only. Empty results mean no verified matching measurements are indexed.",
+        "summary": "List verified numeric observations",
+        "description": "Returns imported measurement rows, never staged candidates, when linked to a verified NASA source record. Pipeline-extracted values reach this store only after explicit review. Each point retains the reported value and unit, document title, URL, available page/section, and supporting excerpt. Pending candidates are never exposed. Empty data includes catalog data_availability and an explanation; no sample values are generated.",
         "operationId": "measurements_api_measurements_get",
         "parameters": [
           {
@@ -734,6 +734,80 @@
         ],
         "title": "ChatResponse"
       },
+      "ComparisonInvestigation": {
+        "properties": {
+          "investigation_id": {
+            "type": "string",
+            "title": "Investigation Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "acronym": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acronym"
+          },
+          "research_area": {
+            "type": "string",
+            "enum": [
+              "prevention",
+              "detection",
+              "suppression",
+              "fundamentals",
+              "related",
+              "other"
+            ],
+            "title": "Research Area"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "microgravity",
+              "normal_gravity",
+              "other",
+              "unknown"
+            ],
+            "title": "Environment"
+          },
+          "data_availability": {
+            "type": "string",
+            "enum": [
+              "metadata_only",
+              "documents",
+              "numeric_dataset",
+              "unknown"
+            ],
+            "title": "Data Availability"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCitation"
+            },
+            "type": "array",
+            "title": "Citations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "investigation_id",
+          "title",
+          "acronym",
+          "research_area",
+          "environment",
+          "data_availability",
+          "citations"
+        ],
+        "title": "ComparisonInvestigation"
+      },
       "ComparisonRequest": {
         "properties": {
           "investigation_ids": {
@@ -742,7 +816,7 @@
             },
             "type": "array",
             "maxItems": 5,
-            "minItems": 1,
+            "minItems": 2,
             "title": "Investigation Ids"
           }
         },
@@ -757,10 +831,24 @@
         "properties": {
           "investigations": {
             "items": {
-              "$ref": "#/components/schemas/Investigation"
+              "$ref": "#/components/schemas/ComparisonInvestigation"
             },
             "type": "array",
             "title": "Investigations"
+          },
+          "field_comparisons": {
+            "items": {
+              "$ref": "#/components/schemas/FieldComparison"
+            },
+            "type": "array",
+            "title": "Field Comparisons"
+          },
+          "differences_summary": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Differences Summary"
           },
           "limitations": {
             "items": {
@@ -774,9 +862,46 @@
         "type": "object",
         "required": [
           "investigations",
+          "field_comparisons",
+          "differences_summary",
           "limitations"
         ],
         "title": "ComparisonResponse"
+      },
+      "ComparisonValue": {
+        "properties": {
+          "investigation_id": {
+            "type": "string",
+            "title": "Investigation Id"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/components/schemas/InvestigationConditions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "investigation_id",
+          "value"
+        ],
+        "title": "ComparisonValue"
       },
       "ErrorBody": {
         "properties": {
@@ -841,6 +966,61 @@
           "error"
         ],
         "title": "ErrorResponse"
+      },
+      "FieldComparison": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "objectives",
+              "research_area",
+              "environment",
+              "conditions",
+              "materials_or_fuels",
+              "hardware",
+              "sensors",
+              "variables_measured",
+              "findings",
+              "data_availability"
+            ],
+            "title": "Field"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "same",
+              "different",
+              "not_comparable"
+            ],
+            "title": "Status"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonValue"
+            },
+            "type": "array",
+            "title": "Values"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "status",
+          "values"
+        ],
+        "title": "FieldComparison"
       },
       "HealthResponse": {
         "properties": {
@@ -1048,7 +1228,40 @@
         ],
         "title": "InvestigationPage"
       },
-      "Measurement": {
+      "MeasurementList": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/MeasurementObservation"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "data_availability": {
+            "type": "string",
+            "enum": [
+              "metadata_only",
+              "documents",
+              "numeric_dataset",
+              "unknown"
+            ],
+            "title": "Data Availability"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "data_availability",
+          "message"
+        ],
+        "title": "MeasurementList"
+      },
+      "MeasurementObservation": {
         "properties": {
           "measurement_id": {
             "type": "string",
@@ -1069,6 +1282,17 @@
             "type": "number",
             "title": "Value"
           },
+          "reported_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Value"
+          },
           "unit": {
             "type": "string",
             "minLength": 1,
@@ -1079,7 +1303,7 @@
             "minLength": 1,
             "title": "Source Id"
           },
-          "conditions": {
+          "observation_context": {
             "additionalProperties": {
               "anyOf": [
                 {
@@ -1094,7 +1318,121 @@
               ]
             },
             "type": "object",
-            "title": "Conditions"
+            "title": "Observation Context"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "table_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Reference"
+          },
+          "supporting_excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supporting Excerpt"
+          },
+          "extraction_method": {
+            "type": "string",
+            "enum": [
+              "pdf_text",
+              "pdf_table_text",
+              "metadata_text",
+              "manual"
+            ],
+            "title": "Extraction Method",
+            "default": "manual"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "review_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Notes"
+          },
+          "document_title": {
+            "type": "string",
+            "title": "Document Title"
+          },
+          "source_url": {
+            "type": "string",
+            "maxLength": 2083,
+            "minLength": 1,
+            "format": "uri",
+            "title": "Source Url"
           }
         },
         "additionalProperties": false,
@@ -1105,26 +1443,11 @@
           "variable",
           "value",
           "unit",
-          "source_id"
+          "source_id",
+          "document_title",
+          "source_url"
         ],
-        "title": "Measurement"
-      },
-      "MeasurementList": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/Measurement"
-            },
-            "type": "array",
-            "title": "Items"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "title": "MeasurementList"
+        "title": "MeasurementObservation"
       },
       "Pressure": {
         "properties": {
@@ -1705,6 +2028,18 @@
               }
             ],
             "title": "Mime Type"
+          },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
           },
           "verification_status": {
             "type": "string",

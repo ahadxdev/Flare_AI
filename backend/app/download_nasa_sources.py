@@ -14,6 +14,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
 
 SOURCES = (
     {
@@ -71,6 +74,16 @@ def _file_metadata(path: Path, source: dict[str, object]) -> dict[str, object]:
             raise ValueError(f"{path} is not a PDF file.")
         if b"%%EOF" not in data[-4096:]:
             raise ValueError(f"{path} does not have a PDF EOF marker.")
+        try:
+            reader = PdfReader(str(path), strict=True)
+            if not reader.pages:
+                raise ValueError("PDF has no pages.")
+            for page in reader.pages:
+                page.extract_text()
+        except (PdfReadError, OSError, ValueError) as exc:
+            raise ValueError(f"{path} is incomplete or cannot be parsed as a PDF.") from exc
+    elif mime_type == "application/json":
+        json.loads(data.decode("utf-8"))
     return {
         **source,
         "local_file_path": path.as_posix(),
@@ -94,7 +107,14 @@ def download(output_dir: Path, manifest_path: Path) -> list[dict[str, object]]:
             temporary = path.with_suffix(path.suffix + ".part")
             try:
                 with urllib.request.urlopen(str(source["source_url"]), timeout=120) as response:
-                    temporary.write_bytes(response.read())
+                    data = response.read()
+                    content_length = response.headers.get("Content-Length")
+                    if content_length is not None and len(data) != int(content_length):
+                        raise ValueError(
+                            f"Incomplete download for {source['file_name']}: "
+                            f"expected {content_length} bytes, received {len(data)}."
+                        )
+                    temporary.write_bytes(data)
                 temporary.replace(path)
             finally:
                 temporary.unlink(missing_ok=True)

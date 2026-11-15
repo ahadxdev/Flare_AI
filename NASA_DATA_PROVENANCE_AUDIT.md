@@ -1,6 +1,6 @@
 # FLARE AI NASA Data Provenance Audit
 
-**Audit/remediation date:** 2026-11-14  
+**Audit/remediation date:** 2026-11-15
 **Scope:** Repository, ingestion code, raw source directory, normalized records, SQLite database, API responses, frontend flow, fixtures, and source manifest.
 
 ## Final status
@@ -14,7 +14,10 @@ The application now preserves and hashes four original NASA-hosted source files:
 
 The BASS-II publication PDF was requested from its official NTRS download URL, but the transfer ended at 41,054,208 bytes while the server reported 48,972,416 bytes. The server did not support byte-range resume. That incomplete file was not retained or marked verified. The official NTRS metadata response was preserved instead, and the publication remains explicitly unavailable.
 
-No numeric measurements were added because no source CSV/table extraction was completed with row/page/figure provenance. The production measurement collection remains empty.
+The source-backed numeric-candidate scanner processes all locally preserved
+verified source files. The database contains three previously approved FLEX
+extinction-diameter observations; the latest scan added review candidates only
+and did not approve or alter any observation value.
 
 ## Totals
 
@@ -24,7 +27,7 @@ No numeric measurements were added because no source CSV/table extraction was co
 | Original source files preserved | 4 |
 | Investigations with a preserved original NASA publication file | 3 |
 | Verified datasets/CSVs | 0 |
-| Verified numeric measurements | 0 |
+| Verified numeric measurements | 3 |
 | Investigations with complete publication source traceability | 3 |
 | Investigations with partial traceability | 1 (`psi-bass-ii`) |
 | Unverified production investigation records | 0 at URL/metadata level; 1 partial at publication-file level |
@@ -39,7 +42,7 @@ No numeric measurements were added because no source CSV/table extraction was co
 | `psi-98` | Spacecraft Fire Experiment-I (SAFFIRE-I) | `data/raw/nasa/20170000230.pdf` | Verified PDF | Documents | No verified measurements |
 | `psi-99` | Spacecraft Fire Experiment-II (SAFFIRE-II) | `data/raw/nasa/20170000230.pdf` | Verified PDF | Documents | No verified measurements |
 | `psi-bass-ii` | Burning and Suppression of Solids-II (BASS-II) | `data/raw/nasa/20210011385.json`; report PDF unavailable | Metadata JSON verified; publication unavailable | Documents | No verified measurements |
-| `psi-flex` | Flame Extinguishment Experiment (FLEX) | `data/raw/nasa/20130014061.pdf`; `data/raw/nasa/20150023456.pdf` | Verified PDFs | Documents | No verified measurements |
+| `psi-flex` | Flame Extinguishment Experiment (FLEX) | `data/raw/nasa/20130014061.pdf`; `data/raw/nasa/20150023456.pdf` | Verified PDFs | Documents | Three approved extinction-diameter observations; reviewer attribution unknown |
 
 ### Source URLs and exact evidence
 
@@ -94,15 +97,89 @@ The live API was queried after re-import:
 
 - `GET /api/investigations` returned `4`.
 - `GET /api/investigations/psi-flex` returned both verified PDF paths, MIME types, hashes, and `verification_status: "verified"`, plus the unverified PSI portfolio source.
-- `GET /api/measurements` returned `{ "items": [] }`.
+- The existing process on port 8000 was not stopped or reloaded. Its health
+  route returns `{"status":"ok"}`, but its live `GET /api/measurements`
+  currently returns `INTERNAL_ERROR`. The current FastAPI application was
+  verified in-process: it returns the `data` contract and all three approved
+  observations with source URLs, pages, sections, excerpts, and reviewer-audit
+  notes. Restart the existing process to load the current code; no running
+  process was modified.
 - No API route contains a production hardcoded investigation list.
 - The frontend requests catalog data through [src/api.ts](./src/api.ts), renders it in [src/App.tsx](./src/App.tsx), and links source URLs from the returned records.
 
 ## Measurement audit
 
-**Status: PASS for no-synthetic-data behavior; EMPTY for verified numeric observations.**
+**Status: PASS for source provenance, duplicate prevention, and review gating.**
 
-The production measurements table contains zero rows. No numeric observation was created from prose findings. Statements such as BASS-II heat-release results and FLEX limiting-oxygen results remain source-backed findings, not measurement rows. A future measurement import must include source ID, value, unit, extraction status, and page/table/figure/section evidence.
+The SQLite database contains four investigations, 2,423 candidate rows, and
+three measurements. Candidate statuses are 2,420 `pending_review`, 3
+`approved`, and 0 `rejected`. Database classifications are 726
+`experimental_observation`, 1,385 `boundary_condition`, 284 `setup_parameter`,
+25 `ambiguous`, 2 `reported_summary`, and 1 `simulation_input`. Three verified
+NASA PDFs and the verified BASS-II NTRS metadata JSON were processed. The
+reconciled scan contains 2,420 pending nonduplicate candidates: 2,375 newly
+staged rows plus 45 pending rows from the earlier scan. The three approved
+candidate records bring the database candidate total to 2,423. The
+scanner examined 338 source/investigation page records (the SAFFIRE PDF is
+attached to two investigations), corresponding to 328 unique PDF pages with
+extractable text plus one metadata abstract. Six pages of
+`20150023456.pdf` had no text layer (PDF pages 1, 6, 24, 312, 313, and 314);
+OCR was not run. There were no page extraction exceptions or source-integrity
+issues.
+
+The three existing approved observations remain unchanged:
+
+| Investigation | Run | Reported observation | Source |
+|---|---:|---|---|
+| `psi-flex` | `#204` | 1.10 mm extinction diameter | [20130014061.pdf](./data/raw/nasa/20130014061.pdf), PDF p. 5, section 3.1 |
+| `psi-flex` | `#110` | 1.57 mm extinction diameter | [20130014061.pdf](./data/raw/nasa/20130014061.pdf), PDF p. 5, section 3.1 |
+| `psi-flex` | `#263` | 1.42 mm extinction diameter | [20130014061.pdf](./data/raw/nasa/20130014061.pdf), PDF p. 5, section 3.1 |
+
+The existing reviewer fields were the placeholders `Your Name`/`YOUR NAME`.
+They were cleared from both candidate and measurement records, not replaced
+with an invented person. Original review timestamps and approval status were
+preserved, and an audit note records that the actual reviewer could not be
+established. The UI now shows the unknown attribution and audit note.
+
+The principal coverage expansion is Table IX, “Results by Test Number and FLEX
+Identifier,” in `20150023456.pdf`, PDF pages 26–34. The row parser found 276
+distinct FLEX test IDs in the extracted text. Four IDs in the 001–280 range
+(156, 205, 213, and 228) do not occur in the extracted text and were not
+inferred. The parser staged 2,370 Table IX candidates with the row conditions,
+test ID, FLEX identifier, fuel, exact source row/header excerpt, original unit,
+page, and table reference:
+
+- 1,380 ambient pressure and gas mole-fraction boundary-condition candidates.
+- 264 initial droplet diameter setup-parameter candidates.
+- 723 per-test visible flame extinction diameter, burning rate, and burn-time
+  result candidates.
+- 3 ambiguous values: one conflicting run and two explicitly approximate
+  burn-time entries (`~6` and `~9`).
+
+All new candidates remain pending review. Table IX rows for FLEX tests 110 and
+263 exactly duplicate existing approved run/value/unit records and were
+suppressed. Test FLEX–204 reports 1.11 mm versus the already approved 1.10 mm;
+that candidate remains ambiguous, carries a conflict flag, and cannot be
+approved as a second observation. The source values were not reconciled,
+rounded, converted, or overwritten.
+
+The BASS-II abstract’s aggregate “well below 100 W” statement was classified as
+a reported summary, not an individual experimental observation. The scanner
+also recorded 8,671 numeric tokens without a supported unit and 452
+unit-bearing quantities without a nearby recognized variable; these are
+rejection counts, not unique scientific candidate counts. Three duplicate
+detections within the extraction batch and five candidates matching approved
+measurements were suppressed. One unavailable and four unverified sources
+were skipped. No OCR or figure digitization was performed.
+
+Database integrity checks found zero duplicate measurement IDs/groups, zero
+approved measurements missing source/page/evidence provenance, zero
+measurements linked to unverified sources, and zero placeholder reviewer
+labels. The single BASS-II abstract candidate has no page number because the
+verified source is JSON metadata, not a paginated report; its section is
+`Abstract`. No new observations were approved during this scan. A repeat scan
+against the unchanged source files staged zero additional candidates. No
+missing value was replaced with zero.
 
 ## PSI extraction status
 
@@ -116,11 +193,14 @@ No production mock investigation or synthetic measurement was found. The only mo
 
 ## Tests and build
 
-- Backend: **17 tests passed**
-- Frontend production build: **passed**
-- Starter ingestion: **4 investigations, 0 measurements, 0 ingestion issues**
-- File validation: **all declared preserved files passed existence, size, and SHA-256 checks**
-- API provenance check: **passed**
+- Backend: **69 tests passed** (`PYTHONPATH=backend .venv/bin/pytest backend/tests -q`).
+- Frontend production build: **passed** (`npm run build`).
+- OpenAPI/runtime contract: **passed**; regenerated with `cd backend && ../.venv/bin/python export_openapi.py`, then the full test suite confirmed the checked-in JSON exactly matches `default_app.openapi()`.
+- Starter JSON ingestion: **4 investigations, 0 measurements, 0 ingestion issues**; this is separate from the live SQLite database.
+- Source integrity: **all four candidate source files passed local existence and SHA-256 checks**.
+- In-process measurements API: **HTTP 200, three approved FLEX observations with the current `data` contract and complete available provenance**.
+- Existing port-8000 process: health returns HTTP 200, but `/api/measurements?investigation_id=psi-flex` returns HTTP 500; it was not restarted or modified.
+- `git diff --check`: **passed**.
 
 ## Category status
 
@@ -130,9 +210,9 @@ No production mock investigation or synthetic measurement was found. The only mo
 | File-level hashes and sizes | **PASS** | Manifest and source records contain computed hashes and sizes; validation passes. |
 | Source-to-investigation traceability | **PARTIAL** | SAFFIRE/FLEX complete; BASS-II has metadata-file traceability but not the publication PDF. |
 | Verified datasets/CSVs | **FAIL / 0** | No original numeric dataset was publicly retrieved and verified. |
-| Verified measurements | **PASS / EMPTY** | No measurements are displayed or stored, preventing synthetic claims. |
+| Verified measurements | **PASS / 3 APPROVED** | Three pre-existing FLEX observations are retained; all new candidates remain pending review. |
 | API provenance exposure | **PASS** | Source file status, path, MIME type, and citations flow through API. |
-| Frontend provenance display | **PASS / PARTIAL** | Status and preserved-file indicators display; local paths are not download links. |
+| Frontend provenance display | **PASS / PARTIAL** | Measurement values retain source labels, links, run IDs, pages/references, excerpts, and reviewer-attribution audit notes; local paths are not download links. |
 | PSI direct extraction | **PARTIAL** | Official shell/repository endpoints observed; detail payload extraction remains unavailable without authenticated access. |
-| Overall remediation | **PARTIAL** | Genuine NASA files are now preserved, but one publication and all numeric datasets remain blocked. |
+| Overall remediation | **PARTIAL** | Three source-backed measurements are available; one NASA publication is unavailable, figure-only observations are not digitized, and the live port-8000 measurements route must be brought onto the verified current backend before the website can display the records. |
 

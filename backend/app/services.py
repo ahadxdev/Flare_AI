@@ -14,12 +14,19 @@ from app.models import (
     ChatEvidence,
     ChatRequest,
     ChatResponse,
+    ComparisonFieldName,
+    ComparisonInvestigation,
     ComparisonRequest,
     ComparisonResponse,
+    ComparisonStatus,
+    ComparisonValue,
+    FieldComparison,
     Investigation,
+    InvestigationConditions,
     InvestigationPage,
     Measurement,
     MeasurementList,
+    MeasurementObservation,
     ReportRequest,
     ReportResponse,
     ScenarioAnalysisResponse,
@@ -93,17 +100,12 @@ class SQLiteResearchService:
     def __init__(
         self,
         store: SQLiteStore,
-<<<<<<< Updated upstream
         scoring_weights: RelevanceWeights = DEFAULT_RELEVANCE_WEIGHTS,
-    ):
-        self.store = store
-        self.scoring_weights = scoring_weights
-=======
         chat_provider: ChatCompletionProvider | None = None,
     ):
         self.store = store
+        self.scoring_weights = scoring_weights
         self.chat_provider = chat_provider
->>>>>>> Stashed changes
 
     def list_investigations(
         self,
@@ -175,10 +177,87 @@ class SQLiteResearchService:
         items = self.store.get_investigations(request.investigation_ids)
         if len(items) != len(request.investigation_ids):
             raise APIError(404, "NOT_FOUND", "One or more investigations were not found.")
+        field_names: tuple[ComparisonFieldName, ...] = (
+            "objectives",
+            "research_area",
+            "environment",
+            "conditions",
+            "materials_or_fuels",
+            "hardware",
+            "sensors",
+            "variables_measured",
+            "findings",
+            "data_availability",
+        )
+        field_comparisons = []
+        for field in field_names:
+            values = [
+                ComparisonValue(
+                    investigation_id=item.investigation_id,
+                    value=getattr(item, field),
+                )
+                for item in items
+            ]
+            status, explanation = _compare_field_values(field, values)
+            field_comparisons.append(
+                FieldComparison(
+                    field=field,
+                    status=status,
+                    values=values,
+                    explanation=explanation,
+                )
+            )
+
+        different_fields = [
+            item.field.replace("_", " ")
+            for item in field_comparisons
+            if item.status == "different"
+        ]
+        incomparable_fields = [
+            (
+                f"{item.field.replace('_', ' ')}"
+                + (f" ({item.explanation})" if item.explanation else "")
+            )
+            for item in field_comparisons
+            if item.status == "not_comparable"
+        ]
+        differences_summary = []
+        if different_fields:
+            differences_summary.append(
+                f"Different reported fields: {', '.join(different_fields)}."
+            )
+        if incomparable_fields:
+            differences_summary.append(
+                "Not comparable or missing: " + "; ".join(incomparable_fields) + "."
+            )
+        if not differences_summary:
+            differences_summary.append(
+                "No differences were found among the complete reported fields."
+            )
+
         return ComparisonResponse(
-            investigations=items,
+            investigations=[
+                ComparisonInvestigation(
+                    investigation_id=item.investigation_id,
+                    title=item.title,
+                    acronym=item.acronym,
+                    research_area=item.research_area,
+                    environment=item.environment,
+                    data_availability=item.data_availability,
+                    citations=[
+                        SourceCitation.model_validate(
+                            source.model_dump(mode="json", exclude={"source_type"})
+                        )
+                        for source in item.sources
+                    ],
+                )
+                for item in items
+            ],
+            field_comparisons=field_comparisons,
+            differences_summary=differences_summary,
             limitations=[
-                "Only indexed source metadata is shown; missing conditions or findings are not inferred."
+                "Values are compared as reported; numeric unit conversions are not performed.",
+                "Fields missing or incomplete for any selected record are marked not_comparable.",
             ],
         )
 
@@ -208,7 +287,17 @@ class SQLiteResearchService:
             investigation_ids=allowed_ids,
         )
         if not hits:
-            return self._insufficient_evidence(scenario is not None)
+            unavailable_sources = any(
+                source.verification_status == "unavailable"
+                for investigation in self.store.get_investigations(
+                    allowed_ids or []
+                )
+                for source in investigation.sources
+            )
+            return self._insufficient_evidence(
+                scenario is not None,
+                unavailable_sources,
+            )
 
         provider_failure: str | None = None
         if self.chat_provider is None:
@@ -235,7 +324,9 @@ class SQLiteResearchService:
             provider_failure=provider_failure,
         )
 
-    def _insufficient_evidence(self, has_scenario: bool) -> ChatResponse:
+    def _insufficient_evidence(
+        self, has_scenario: bool, has_unavailable_sources: bool = False
+    ) -> ChatResponse:
         scenario_relevance = (
             "The scenario is a user-entered hypothetical; no indexed evidence was found "
             "to assess its relevance."
@@ -251,15 +342,20 @@ class SQLiteResearchService:
             "partial-gravity performance.\n\n"
             "Sources: None retrieved."
         )
+        limitations = [
+            "Not available in indexed sources: no relevant verified excerpts were retrieved.",
+            "Specific investigation claims cannot be supported without indexed evidence.",
+            "Microgravity evidence does not establish lunar or Martian partial-gravity performance.",
+        ]
+        if has_unavailable_sources:
+            limitations.append(
+                "One or more linked NASA source files are unavailable locally."
+            )
         return ChatResponse(
             answer=answer,
             evidence=[],
             citations=[],
-            limitations=[
-                "Not available in indexed sources: no relevant verified excerpts were retrieved.",
-                "Specific investigation claims cannot be supported without indexed evidence.",
-                "Microgravity evidence does not establish lunar or Martian partial-gravity performance.",
-            ],
+            limitations=limitations,
             answer_status="insufficient_evidence",
         )
 
@@ -297,21 +393,28 @@ class SQLiteResearchService:
                 document_title=hit.source.document_title,
                 source_url=hit.source.source_url,
                 page_number=hit.excerpt.page_number or hit.source.page_number,
-                section=hit.excerpt.section or hit.source.section,
+                section=_citation_section(hit),
                 excerpt=hit.excerpt.excerpt,
             )
             for hit in hits
         ]
         citations = [
             SourceCitation(
-                source_id=item.source_id,
-                document_title=item.document_title,
-                source_url=item.source_url,
-                page_number=item.page_number,
-                section=item.section,
-                quote_or_supported_excerpt=item.excerpt,
+                source_id=hit.source.source_id,
+                document_title=hit.source.document_title,
+                source_url=hit.source.source_url,
+                page_number=hit.excerpt.page_number or hit.source.page_number,
+                section=_citation_section(hit),
+                quote_or_supported_excerpt=hit.excerpt.excerpt,
+                local_file_path=hit.source.local_file_path,
+                downloaded_at=hit.source.downloaded_at,
+                sha256=hit.source.sha256,
+                file_size_bytes=hit.source.file_size_bytes,
+                mime_type=hit.source.mime_type,
+                last_verified_at=hit.source.last_verified_at,
+                verification_status=hit.source.verification_status,
             )
-            for item in evidence
+            for hit in hits
         ]
         limitations = [answer.limitations]
         if provider_failure:
@@ -323,6 +426,14 @@ class SQLiteResearchService:
         if any(hit.investigation.environment == "microgravity" for hit in hits):
             limitations.append(
                 "Microgravity evidence does not establish lunar or Martian partial-gravity performance."
+            )
+        if any(
+            source.verification_status == "unavailable"
+            for hit in hits
+            for source in hit.investigation.sources
+        ):
+            limitations.append(
+                "One or more linked NASA source files are unavailable locally; only retrieved verified excerpts are used."
             )
         limitations.append("Generated interpretation is not a NASA-reported fact.")
         source_excerpts = "\n".join(
@@ -354,8 +465,62 @@ class SQLiteResearchService:
     def measurements(
         self, investigation_id: str | None, variable: str | None
     ) -> MeasurementList:
+        if investigation_id is not None:
+            investigation = self.store.get_investigation(investigation_id)
+            if investigation is None:
+                raise APIError(404, "NOT_FOUND", "Investigation not found.")
+            investigations = [investigation]
+        else:
+            investigations, _ = self.store.list_investigations(page_size=1_000_000)
+
+        sources = {
+            (investigation.investigation_id, source.source_id): source
+            for investigation in investigations
+            for source in investigation.sources
+        }
+        data: list[MeasurementObservation] = []
+        for item in self.store.measurements(investigation_id, variable):
+            source = sources.get((item.investigation_id, item.source_id))
+            if (
+                source is None
+                or source.verification_status != "verified"
+                or source.source_type not in {"NASA_PSI", "NASA_REPORT", "NASA_DATASET"}
+            ):
+                continue
+            point = item.model_dump()
+            point.update(
+                document_title=source.document_title,
+                source_url=source.source_url,
+                page_number=item.page_number or source.page_number,
+                section=item.section or source.section,
+            )
+            data.append(MeasurementObservation.model_validate(point))
+
+        availability = (
+            "numeric_dataset"
+            if data
+            else (
+                investigations[0].data_availability
+                if investigation_id and investigations
+                else (
+                    investigations[0].data_availability
+                    if investigations
+                    and len({item.data_availability for item in investigations}) == 1
+                    else "unknown"
+                )
+            )
+        )
+        message = (
+            "Reported NASA-source observations are shown; plotted values are observations, not predictions."
+            if data
+            else (
+                f"No verified numeric observations are indexed. Catalog data availability: {availability}."
+            )
+        )
         return MeasurementList(
-            items=self.store.measurements(investigation_id, variable)
+            data=data,
+            data_availability=availability,
+            message=message,
         )
 
     def create_report(self, request: ReportRequest) -> ReportResponse:
@@ -374,6 +539,7 @@ class SQLiteResearchService:
                 sha256=source.sha256,
                 file_size_bytes=source.file_size_bytes,
                 mime_type=source.mime_type,
+                last_verified_at=source.last_verified_at,
                 verification_status=source.verification_status,
             )
             for item in items
@@ -391,6 +557,12 @@ class SQLiteResearchService:
             gaps.append("Findings are not available in indexed sources for every selection.")
         if not self.store.measurements_for_investigations(request.investigation_ids):
             gaps.append("Verified numeric measurements are not available for these investigations.")
+        if any(
+            source.verification_status == "unavailable"
+            for item in items
+            for source in item.sources
+        ):
+            gaps.append("One or more linked source documents are unavailable locally.")
         return ReportResponse(
             report_id=str(uuid.uuid4()),
             title="FLARE AI evidence brief",
@@ -406,6 +578,60 @@ class SQLiteResearchService:
             ],
             research_gaps=gaps,
         )
+
+
+def _citation_section(hit: EvidenceHit) -> str | None:
+    if hit.excerpt.section is not None:
+        return hit.excerpt.section
+    return hit.source.section if hit.excerpt.page_number is None else None
+
+
+def _compare_field_values(
+    field: ComparisonFieldName, values: list[ComparisonValue]
+) -> tuple[ComparisonStatus, str | None]:
+    raw_values = [value.value for value in values]
+    if field == "conditions":
+        conditions = [
+            value for value in raw_values if isinstance(value, InvestigationConditions)
+        ]
+        if len(conditions) != len(raw_values) or any(
+            item.oxygen_pct is None
+            or item.pressure.value is None
+            or item.pressure.unit is None
+            for item in conditions
+        ):
+            return (
+                "not_comparable",
+                "One or more records have incomplete oxygen or pressure conditions.",
+            )
+        pressure_units = {item.pressure.unit for item in conditions}
+        if len(pressure_units) != 1:
+            return (
+                "not_comparable",
+                "Pressure units differ; numeric conversion is not performed.",
+            )
+        if all(item == conditions[0] for item in conditions[1:]):
+            return "same", None
+        return "different", None
+
+    if any(_comparison_value_is_missing(value) for value in raw_values):
+        return (
+            "not_comparable",
+            "At least one selected record does not report this field.",
+        )
+    if all(value == raw_values[0] for value in raw_values[1:]):
+        return "same", None
+    return "different", None
+
+
+def _comparison_value_is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip() or value == "unknown"
+    if isinstance(value, list):
+        return not value
+    return False
 
 
 def _score_investigation(
@@ -537,6 +763,8 @@ def _score_investigation(
         )
     if not investigation.sources:
         limitations.append("No citations are linked to this investigation record.")
+    if any(source.verification_status == "unavailable" for source in investigation.sources):
+        limitations.append("One or more linked source documents are unavailable locally.")
     if investigation.environment == "microgravity":
         limitations.append("Microgravity results do not prove partial-gravity performance.")
 
@@ -602,6 +830,7 @@ def _score_investigation(
             sha256=source.sha256,
             file_size_bytes=source.file_size_bytes,
             mime_type=source.mime_type,
+            last_verified_at=source.last_verified_at,
             verification_status=source.verification_status,
         )
         for source in investigation.sources

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -17,6 +18,27 @@ ResearchArea = Literal[
 Environment = Literal["microgravity", "normal_gravity", "other", "unknown"]
 DataAvailability = Literal["metadata_only", "documents", "numeric_dataset", "unknown"]
 SourceVerificationStatus = Literal["verified", "unverified", "unavailable"]
+MeasurementExtractionMethod = Literal[
+    "pdf_text", "pdf_table_text", "metadata_text", "manual"
+]
+MeasurementCandidateClassification = Literal[
+    "experimental_observation",
+    "derived_quantity",
+    "initial_condition",
+    "approximate_value",
+    "setup_parameter",
+    "boundary_condition",
+    "simulation_input",
+    "hypothetical",
+    "incidental",
+    "reported_summary",
+    "ambiguous",
+    "other",
+]
+MeasurementReviewStatus = Literal[
+    "pending_review", "needs_more_evidence", "approved", "rejected"
+]
+MeasurementReviewDecision = Literal["approve", "reject", "needs_more_evidence"]
 ScenarioEnvironment = Literal[
     "lunar_habitat", "mars_habitat", "spacecraft", "spacesuit", "custom"
 ]
@@ -91,6 +113,7 @@ class SourceCitation(APIModel):
     sha256: str | None = None
     file_size_bytes: int | None = Field(default=None, ge=0)
     mime_type: str | None = None
+    last_verified_at: datetime | None = None
     verification_status: SourceVerificationStatus = "unverified"
 
     @field_validator("source_url")
@@ -163,19 +186,60 @@ class ScenarioAnalysisResponse(APIModel):
     limitations: list[str]
 
 
+ComparisonFieldName = Literal[
+    "objectives",
+    "research_area",
+    "environment",
+    "conditions",
+    "materials_or_fuels",
+    "hardware",
+    "sensors",
+    "variables_measured",
+    "findings",
+    "data_availability",
+]
+ComparisonStatus = Literal["same", "different", "not_comparable"]
+
+
 class ComparisonRequest(APIModel):
-    investigation_ids: list[str] = Field(min_length=1, max_length=5)
+    investigation_ids: list[str] = Field(min_length=2, max_length=5)
 
     @field_validator("investigation_ids")
     @classmethod
     def unique_investigations(cls, ids: list[str]) -> list[str]:
+        if any(not item.strip() for item in ids):
+            raise ValueError("Investigation IDs must be non-empty.")
         if len(set(ids)) != len(ids):
             raise ValueError("Investigation IDs must be unique.")
         return ids
 
 
+class ComparisonInvestigation(APIModel):
+    investigation_id: str
+    title: str
+    acronym: str | None
+    research_area: ResearchArea
+    environment: Environment
+    data_availability: DataAvailability
+    citations: list[SourceCitation]
+
+
+class ComparisonValue(APIModel):
+    investigation_id: str
+    value: str | list[str] | InvestigationConditions | None
+
+
+class FieldComparison(APIModel):
+    field: ComparisonFieldName
+    status: ComparisonStatus
+    values: list[ComparisonValue]
+    explanation: str | None = None
+
+
 class ComparisonResponse(APIModel):
-    investigations: list[Investigation]
+    investigations: list[ComparisonInvestigation]
+    field_comparisons: list[FieldComparison]
+    differences_summary: list[str]
     limitations: list[str]
 
 
@@ -252,13 +316,127 @@ class Measurement(APIModel):
     investigation_id: str = Field(min_length=1)
     variable: str = Field(min_length=1)
     value: float = Field(allow_inf_nan=False)
+    reported_value: str | None = None
     unit: str = Field(min_length=1)
     source_id: str = Field(min_length=1)
-    conditions: dict[str, str | float | None] = Field(default_factory=dict)
+    observation_context: dict[str, str | float | None] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("observation_context", "conditions"),
+    )
+    page_number: int | None = Field(default=None, ge=1)
+    section: str | None = None
+    table_reference: str | None = None
+    supporting_excerpt: str | None = None
+    extraction_method: MeasurementExtractionMethod = "manual"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    review_notes: str | None = None
+
+
+class MeasurementObservation(Measurement):
+    document_title: str
+    source_url: HttpUrl
 
 
 class MeasurementList(APIModel):
-    items: list[Measurement]
+    data: list[MeasurementObservation]
+    data_availability: DataAvailability
+    message: str
+
+
+class MeasurementCandidate(APIModel):
+    candidate_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    document_title: str = Field(min_length=1)
+    source_url: HttpUrl
+    source_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    variable: str | None = None
+    reported_value: str = Field(min_length=1)
+    value: float = Field(allow_inf_nan=False)
+    unit: str = Field(min_length=1)
+    observation_context: dict[str, str | float | None] = Field(default_factory=dict)
+    page_number: int | None = Field(default=None, ge=1)
+    section: str | None = None
+    table_reference: str | None = None
+    supporting_excerpt: str = Field(min_length=1)
+    extraction_method: Literal["pdf_text", "pdf_table_text", "metadata_text"]
+    confidence: float = Field(ge=0, le=1)
+    classification: MeasurementCandidateClassification
+    review_status: MeasurementReviewStatus = "pending_review"
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    review_notes: str | None = None
+    review_flags: list[str] = Field(default_factory=list)
+    measurement_id: str | None = None
+
+    @field_validator("source_url")
+    @classmethod
+    def require_secure_candidate_source_url(cls, url: HttpUrl) -> HttpUrl:
+        if url.scheme != "https":
+            raise ValueError("Source URLs must use HTTPS.")
+        return url
+
+    @model_validator(mode="after")
+    def validate_approval_provenance(self) -> "MeasurementCandidate":
+        if self.review_status == "approved":
+            if not all((self.reviewed_at, self.measurement_id)):
+                raise ValueError("Approved candidates require review and measurement provenance.")
+            if self.reviewed_by is None and not (
+                self.review_notes
+                and "reviewer could not be established" in self.review_notes.casefold()
+            ):
+                raise ValueError(
+                    "Approved candidates without a reviewer require an explicit attribution audit note."
+                )
+        return self
+
+
+class AdditionalMeasurementEvidence(APIModel):
+    source_id: str = Field(min_length=1)
+    document_title: str = Field(min_length=1)
+    source_url: HttpUrl
+    source_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    page_number: int | None = Field(default=None, ge=1)
+    section: str | None = None
+    supporting_excerpt: str = Field(min_length=1)
+
+
+class MeasurementReviewEvent(APIModel):
+    review_event_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    reviewer: str = Field(min_length=1)
+    decision: MeasurementReviewDecision
+    previous_status: MeasurementReviewStatus
+    new_status: MeasurementReviewStatus
+    previous_classification: MeasurementCandidateClassification
+    new_classification: MeasurementCandidateClassification
+    classification_reason: str | None = None
+    reviewed_at: datetime
+    rationale: str = Field(min_length=1)
+    evidence_notes: str = Field(min_length=1)
+    source_review_confirmed: bool = False
+    measurement_definition_confirmed: bool = False
+    priority_finding: str | None = None
+    audit_classification: str | None = None
+    audit_quality_flags: list[str] = Field(default_factory=list)
+    figure_reference: str | None = None
+    figure_caption_excerpt: str | None = None
+    priority_resolution_confirmed: bool = False
+    conflict_resolution_confirmed: bool = False
+    zero_value_resolution_confirmed: bool = False
+    additional_evidence_review_confirmed: bool = False
+    additional_supporting_evidence: AdditionalMeasurementEvidence | None = None
+    source_id: str = Field(min_length=1)
+    source_url: HttpUrl
+    document_title: str = Field(min_length=1)
+    source_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    page_number: int | None = Field(default=None, ge=1)
+    section: str | None = None
+    table_reference: str | None = None
+    row_reference: str | None = None
+    supporting_excerpt: str = Field(min_length=1)
 
 
 class ReportRequest(APIModel):

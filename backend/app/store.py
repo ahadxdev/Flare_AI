@@ -3,12 +3,19 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from app.ingestion import validate_source_files
 from app.models import (
+    AdditionalMeasurementEvidence,
     EvidenceExcerpt,
     Investigation,
     Measurement,
+    MeasurementCandidate,
+    MeasurementCandidateClassification,
+    MeasurementReviewEvent,
     ScenarioAnalysisResponse,
     Source,
 )
@@ -42,6 +49,25 @@ _SEARCH_STOPWORDS = {
 }
 
 
+def _append_audit_note(existing: str | None, correction: str) -> str:
+    return f"{existing.rstrip()}\n\n{correction}" if existing else correction
+
+
+def _has_approximate_reported_value(candidate: MeasurementCandidate) -> bool:
+    if (
+        candidate.classification == "approximate_value"
+        or "approximate_reported_value" in candidate.review_flags
+    ):
+        return True
+    numeric_value = re.escape(candidate.reported_value.lstrip("~").strip())
+    return re.search(
+        rf"(?:~\s*|(?:approximately|approx\.?|about)\s+)"
+        rf"(?<![\w.]){numeric_value}(?![\w.])",
+        candidate.supporting_excerpt,
+        re.IGNORECASE,
+    ) is not None
+
+
 @dataclass(frozen=True)
 class EvidenceHit:
     excerpt: EvidenceExcerpt
@@ -65,6 +91,35 @@ class SQLiteStore:
                 "(measurement_id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL, "
                 "variable TEXT NOT NULL, payload TEXT NOT NULL, "
                 "FOREIGN KEY(investigation_id) REFERENCES investigations(investigation_id))"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS measurement_candidates "
+                "(candidate_id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL, "
+                "source_id TEXT NOT NULL, review_status TEXT NOT NULL, payload TEXT NOT NULL, "
+                "FOREIGN KEY(investigation_id) REFERENCES investigations(investigation_id))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS measurement_candidates_status "
+                "ON measurement_candidates(review_status, candidate_id)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS measurement_review_history "
+                "(review_event_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL, "
+                "reviewed_at TEXT NOT NULL, payload TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS measurement_review_history_candidate "
+                "ON measurement_review_history(candidate_id, reviewed_at, review_event_id)"
+            )
+            connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS measurement_review_history_no_update "
+                "BEFORE UPDATE ON measurement_review_history BEGIN "
+                "SELECT RAISE(ABORT, 'measurement review history is append-only'); END"
+            )
+            connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS measurement_review_history_no_delete "
+                "BEFORE DELETE ON measurement_review_history BEGIN "
+                "SELECT RAISE(ABORT, 'measurement review history is append-only'); END"
             )
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS evidence_excerpts "
@@ -221,6 +276,665 @@ class SQLiteStore:
             ).fetchall()
         return [Measurement.model_validate_json(row["payload"]) for row in rows]
 
+    def stage_measurement_candidates(
+        self, candidates: list[MeasurementCandidate]
+    ) -> int:
+        candidate_ids = {item.candidate_id for item in candidates}
+        if len(candidate_ids) != len(candidates):
+            raise ValueError("Candidate IDs in the extraction batch must be unique.")
+
+        inserted = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            investigation_ids = {item.investigation_id for item in candidates}
+            if investigation_ids:
+                placeholders = ",".join("?" for _ in investigation_ids)
+                rows = connection.execute(
+                    "SELECT payload FROM investigations "
+                    f"WHERE investigation_id IN ({placeholders})",
+                    list(investigation_ids),
+                ).fetchall()
+            else:
+                rows = []
+            investigations = {
+                item.investigation_id: item
+                for item in (
+                    Investigation.model_validate_json(row["payload"]) for row in rows
+                )
+            }
+
+            for candidate in candidates:
+                if candidate.review_status != "pending_review":
+                    raise ValueError("Only pending candidates may be staged.")
+                investigation = investigations.get(candidate.investigation_id)
+                source = next(
+                    (
+                        item
+                        for item in investigation.sources
+                        if item.source_id == candidate.source_id
+                    ),
+                    None,
+                ) if investigation else None
+                if (
+                    source is None
+                    or source.verification_status != "verified"
+                    or source.source_type not in {"NASA_PSI", "NASA_REPORT", "NASA_DATASET"}
+                    or source.sha256 is None
+                    or source.sha256.casefold() != candidate.source_sha256.casefold()
+                    or str(source.source_url) != str(candidate.source_url)
+                    or source.document_title != candidate.document_title
+                ):
+                    raise ValueError(
+                        "Candidates must cite the matching verified NASA source "
+                        "attached to their investigation."
+                    )
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO measurement_candidates"
+                    "(candidate_id, investigation_id, source_id, review_status, payload) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        candidate.candidate_id,
+                        candidate.investigation_id,
+                        candidate.source_id,
+                        candidate.review_status,
+                        candidate.model_dump_json(),
+                    ),
+                )
+                inserted += cursor.rowcount
+        return inserted
+
+    def measurement_candidates(
+        self, review_status: str | None = None
+    ) -> list[MeasurementCandidate]:
+        if review_status:
+            query = (
+                "SELECT payload FROM measurement_candidates "
+                "WHERE review_status = ? ORDER BY candidate_id"
+            )
+            parameters = (review_status,)
+        else:
+            query = "SELECT payload FROM measurement_candidates ORDER BY candidate_id"
+            parameters = ()
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [
+            MeasurementCandidate.model_validate_json(row["payload"])
+            for row in rows
+        ]
+
+    def measurement_candidate(
+        self, candidate_id: str
+    ) -> MeasurementCandidate | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM measurement_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+        return (
+            MeasurementCandidate.model_validate_json(row["payload"])
+            if row
+            else None
+        )
+
+    def measurement_review_history(
+        self, candidate_id: str
+    ) -> list[MeasurementReviewEvent]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM measurement_review_history "
+                "WHERE candidate_id = ? ORDER BY reviewed_at, review_event_id",
+                (candidate_id,),
+            ).fetchall()
+        return [
+            MeasurementReviewEvent.model_validate_json(row["payload"])
+            for row in rows
+        ]
+
+    def correct_placeholder_reviewer_attributions(self) -> list[dict[str, str]]:
+        placeholders = {"your name", "your reviewer name"}
+        corrected: list[dict[str, str]] = []
+        corrected_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT measurement_id, payload FROM measurements"
+            ).fetchall()
+            candidate_rows = connection.execute(
+                "SELECT payload FROM measurement_candidates"
+            ).fetchall()
+            candidates_by_measurement = {
+                candidate.measurement_id: candidate
+                for candidate in (
+                    MeasurementCandidate.model_validate_json(row["payload"])
+                    for row in candidate_rows
+                )
+                if candidate.measurement_id is not None
+            }
+            for row in rows:
+                measurement = Measurement.model_validate_json(row["payload"])
+                previous_reviewer = (measurement.reviewed_by or "").strip()
+                if previous_reviewer.casefold() not in placeholders:
+                    continue
+                correction = (
+                    f"Audit correction {corrected_at}: removed placeholder reviewer "
+                    f"attribution {previous_reviewer!r}; the original reviewer "
+                    "could not be established. The existing approval status and "
+                    "review timestamp are retained; this correction does not "
+                    "certify the observation."
+                )
+                review_notes = _append_audit_note(
+                    measurement.review_notes, correction
+                )
+                updated_measurement = measurement.model_copy(
+                    update={"reviewed_by": None, "review_notes": review_notes}
+                )
+                connection.execute(
+                    "UPDATE measurements SET payload = ? WHERE measurement_id = ?",
+                    (
+                        updated_measurement.model_dump_json(),
+                        measurement.measurement_id,
+                    ),
+                )
+                candidate = candidates_by_measurement.get(
+                    measurement.measurement_id
+                )
+                corrected_candidate_id = ""
+                if candidate is not None:
+                    candidate_reviewer = (candidate.reviewed_by or "").strip()
+                    if candidate_reviewer.casefold() in placeholders:
+                        candidate_notes = _append_audit_note(
+                            candidate.review_notes, correction
+                        )
+                        updated_candidate = MeasurementCandidate.model_validate(
+                            {
+                                **candidate.model_dump(),
+                                "reviewed_by": None,
+                                "review_notes": candidate_notes,
+                            }
+                        )
+                        connection.execute(
+                            "UPDATE measurement_candidates "
+                            "SET payload = ? WHERE candidate_id = ?",
+                            (
+                                updated_candidate.model_dump_json(),
+                                candidate.candidate_id,
+                            ),
+                        )
+                        corrected_candidate_id = candidate.candidate_id
+                corrected.append(
+                    {
+                        "measurement_id": measurement.measurement_id,
+                        "candidate_id": corrected_candidate_id,
+                        "previous_reviewer": previous_reviewer,
+                        "reviewer_attribution": "unknown",
+                    }
+                )
+        return corrected
+
+    def review_measurement_candidate(
+        self,
+        candidate_id: str,
+        decision: str,
+        reviewer: str,
+        *,
+        classification: MeasurementCandidateClassification | None = None,
+        classification_reason: str | None = None,
+        notes: str | None = None,
+        rationale: str | None = None,
+        evidence_notes: str | None = None,
+        source_review_confirmed: bool = False,
+        measurement_definition_confirmed: bool = False,
+        priority_resolution_confirmed: bool = False,
+        conflict_resolution_confirmed: bool = False,
+        audit_classification: str | None = None,
+        audit_rationale: str | None = None,
+        audit_quality_flags: list[str] | None = None,
+        figure_reference: str | None = None,
+        figure_caption_excerpt: str | None = None,
+        zero_value_resolution_confirmed: bool = False,
+        additional_evidence_source_id: str | None = None,
+        additional_evidence_page_number: int | None = None,
+        additional_evidence_section: str | None = None,
+        additional_evidence_excerpt: str | None = None,
+        additional_evidence_review_confirmed: bool = False,
+        repository_root: str | Path | None = None,
+    ) -> MeasurementCandidate | None:
+        if decision not in {"approve", "reject", "needs_more_evidence"}:
+            raise ValueError(
+                "Candidate decision must be approve, reject, or needs_more_evidence."
+            )
+        if not reviewer.strip():
+            raise ValueError("A reviewer name is required.")
+        if reviewer.strip().casefold() in {
+            "your name",
+            "your reviewer name",
+            "unknown",
+            "unknown reviewer",
+            "anonymous",
+            "n/a",
+        }:
+            raise ValueError("Use the actual reviewer name, not a placeholder.")
+        if rationale and notes and rationale.strip() != notes.strip():
+            raise ValueError("Provide either rationale or legacy notes, not both.")
+        decision_rationale = (rationale or notes or "").strip()
+        inspected_evidence = (evidence_notes or "").strip()
+        reviewed_quality_flags = [
+            flag.strip()
+            for flag in (audit_quality_flags or [])
+            if flag.strip()
+        ]
+        supplemental_inputs = (
+            additional_evidence_source_id,
+            additional_evidence_page_number,
+            additional_evidence_section,
+            additional_evidence_excerpt,
+        )
+        has_supplemental_inputs = any(value is not None for value in supplemental_inputs)
+        additional_supporting_evidence: AdditionalMeasurementEvidence | None = None
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM measurement_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            candidate = MeasurementCandidate.model_validate_json(row["payload"])
+            target_status = {
+                "approve": "approved",
+                "reject": "rejected",
+                "needs_more_evidence": "needs_more_evidence",
+            }[decision]
+            if candidate.review_status == target_status and target_status != "needs_more_evidence":
+                return candidate
+            if candidate.review_status in {"approved", "rejected"}:
+                raise ValueError(
+                    "Approved and rejected decisions are final; use review history "
+                    "to inspect the prior decision."
+                )
+            if not decision_rationale:
+                raise ValueError("A documented review rationale is required.")
+            if not inspected_evidence:
+                raise ValueError("Notes about the evidence inspected are required.")
+            updated_classification = classification or candidate.classification
+            classification_changed = updated_classification != candidate.classification
+            classification_reason_text = (classification_reason or "").strip()
+            if classification_changed and not classification_reason_text:
+                raise ValueError(
+                    "Changing a candidate classification requires an explicit reason."
+                )
+            if not classification_changed and classification_reason_text:
+                raise ValueError(
+                    "A classification reason is only valid when changing classification."
+                )
+            review_notes = (
+                f"{decision_rationale}\n\nEvidence inspected: {inspected_evidence}"
+            )
+            if (
+                candidate.review_status == target_status
+                and candidate.classification == updated_classification
+                and candidate.review_notes == review_notes
+                and candidate.reviewed_by == reviewer.strip()
+            ):
+                return candidate
+
+            if decision == "approve" and any(
+                flag.startswith("conflicts_with_approved_measurement")
+                for flag in candidate.review_flags
+            ):
+                if not conflict_resolution_confirmed:
+                    raise ValueError(
+                        "This candidate conflicts with an approved measurement. "
+                        "Resolve the conflict explicitly and document the source "
+                        "comparison before approval."
+                    )
+            if decision == "approve" and _has_approximate_reported_value(candidate):
+                raise ValueError(
+                    "Approximate source values cannot be approved as exact measurements."
+                )
+            extinction_variables = {
+                "extinction diameter",
+                "visible flame extinction diameter",
+            }
+            normalized_variable = " ".join(
+                (candidate.variable or "").casefold().split()
+            )
+            is_extinction_diameter = normalized_variable in extinction_variables
+            is_zero_extinction_diameter = (
+                is_extinction_diameter and candidate.value == 0
+            )
+            caption_says_no_diameter = (
+                "Figure_says_no_extinction_diameter_reported"
+                in reviewed_quality_flags
+            )
+            if decision == "approve" and is_zero_extinction_diameter:
+                if not zero_value_resolution_confirmed:
+                    raise ValueError(
+                        "A zero-valued extinction diameter requires an explicit "
+                        "documented zero-value resolution."
+                    )
+            if decision == "approve" and (
+                is_zero_extinction_diameter or caption_says_no_diameter
+            ):
+                if (
+                    not has_supplemental_inputs
+                    or not additional_evidence_review_confirmed
+                ):
+                    raise ValueError(
+                        "This extinction-diameter conflict requires separately "
+                        "cited, verified additional source evidence and explicit "
+                        "confirmation that it was reviewed."
+                    )
+            elif decision == "approve" and has_supplemental_inputs:
+                if not additional_evidence_review_confirmed:
+                    raise ValueError(
+                        "Additional evidence requires explicit confirmation that "
+                        "the cited source was reviewed."
+                    )
+            elif decision == "approve" and additional_evidence_review_confirmed:
+                raise ValueError(
+                    "Additional evidence review confirmation requires a cited "
+                    "additional source and excerpt."
+                )
+            if decision != "approve" and (
+                has_supplemental_inputs or additional_evidence_review_confirmed
+            ):
+                raise ValueError(
+                    "Additional approval evidence can only be attached to an "
+                    "approval decision."
+                )
+
+            reviewed_at = datetime.now(timezone.utc)
+            measurement_id = None
+            if decision == "approve":
+                non_observation_audit_classes = {
+                    "derived_quantity",
+                    "approximate_value",
+                    "boundary_condition",
+                    "initial_condition",
+                    "setup_parameter",
+                    "simulation_input",
+                    "reported_summary",
+                    "hypothetical",
+                    "hypothetical_scenario",
+                    "incidental",
+                    "unsupported",
+                }
+                if audit_classification in non_observation_audit_classes:
+                    raise ValueError(
+                        "The source audit classifies this candidate as a derived "
+                        "quantity, condition, approximate value, or non-observation; "
+                        "it cannot enter the direct-observation measurements dataset."
+                    )
+                if (
+                    audit_classification == "ambiguous"
+                    and not priority_resolution_confirmed
+                ):
+                    raise ValueError(
+                        "This priority candidate requires an explicit documented "
+                        "resolution of its audit finding before approval."
+                    )
+                if (
+                    audit_classification == "ambiguous"
+                    and updated_classification != "experimental_observation"
+                ):
+                    raise ValueError(
+                        "A priority candidate can only be approved after it is "
+                        "explicitly classified as an experimental observation."
+                    )
+                if updated_classification != "experimental_observation":
+                    raise ValueError(
+                        "Only candidates classified as experimental observations can be approved."
+                    )
+                if not source_review_confirmed:
+                    raise ValueError(
+                        "Approval requires explicit confirmation that the original "
+                        "source evidence was inspected."
+                    )
+                if (
+                    candidate.variable
+                    and candidate.variable.casefold().strip() == "burn time"
+                    and not measurement_definition_confirmed
+                ):
+                    raise ValueError(
+                        "Burn-time approval requires confirmation that the source's "
+                        "definition and reporting convention were checked."
+                    )
+                if candidate.variable is None or not candidate.supporting_excerpt.strip():
+                    raise ValueError(
+                        "Approval requires a variable and exact supporting excerpt."
+                    )
+                record = connection.execute(
+                    "SELECT payload FROM investigations WHERE investigation_id = ?",
+                    (candidate.investigation_id,),
+                ).fetchone()
+                investigation = (
+                    Investigation.model_validate_json(record["payload"])
+                    if record
+                    else None
+                )
+                source = next(
+                    (
+                        item
+                        for item in investigation.sources
+                        if item.source_id == candidate.source_id
+                    ),
+                    None,
+                ) if investigation else None
+                if (
+                    source is None
+                    or source.verification_status != "verified"
+                    or source.source_type not in {"NASA_PSI", "NASA_REPORT", "NASA_DATASET"}
+                    or source.sha256 is None
+                    or source.sha256.casefold() != candidate.source_sha256.casefold()
+                    or str(source.source_url) != str(candidate.source_url)
+                    or source.document_title != candidate.document_title
+                ):
+                    raise ValueError(
+                        "The candidate's verified source provenance no longer matches."
+                    )
+                source_check = validate_source_files(
+                    [investigation.model_copy(update={"sources": [source]})],
+                    repository_root or Path(__file__).resolve().parents[2],
+                )
+                if source_check:
+                    raise ValueError(
+                        "The original source file failed verification: "
+                        + source_check[0].message
+                    )
+                if has_supplemental_inputs:
+                    if (
+                        not additional_evidence_source_id
+                        or not additional_evidence_excerpt
+                        or not additional_evidence_excerpt.strip()
+                    ):
+                        raise ValueError(
+                            "Additional evidence requires a source ID and a "
+                            "supporting excerpt."
+                        )
+                    if (
+                        additional_evidence_page_number is None
+                        and not (additional_evidence_section or "").strip()
+                    ):
+                        raise ValueError(
+                            "Additional evidence requires a source page number "
+                            "or section reference."
+                        )
+                    if additional_evidence_source_id == candidate.source_id:
+                        raise ValueError(
+                            "Additional evidence must come from a different "
+                            "verified source than the conflicting Table IX source."
+                        )
+                    additional_source = next(
+                        (
+                            item
+                            for item in investigation.sources
+                            if item.source_id == additional_evidence_source_id
+                        ),
+                        None,
+                    )
+                    if (
+                        additional_source is None
+                        or additional_source.verification_status != "verified"
+                        or additional_source.source_type
+                        not in {"NASA_PSI", "NASA_REPORT", "NASA_DATASET"}
+                        or additional_source.sha256 is None
+                    ):
+                        raise ValueError(
+                            "Additional evidence must reference a verified NASA "
+                            "source attached to this investigation."
+                        )
+                    if (
+                        additional_source.sha256.casefold()
+                        == candidate.source_sha256.casefold()
+                    ):
+                        raise ValueError(
+                            "Additional evidence must come from a different "
+                            "verified source document."
+                        )
+                    additional_check = validate_source_files(
+                        [
+                            investigation.model_copy(
+                                update={"sources": [additional_source]}
+                            )
+                        ],
+                        repository_root or Path(__file__).resolve().parents[2],
+                    )
+                    if additional_check:
+                        raise ValueError(
+                            "The additional evidence source failed verification: "
+                            + additional_check[0].message
+                        )
+                    additional_supporting_evidence = AdditionalMeasurementEvidence(
+                        source_id=additional_source.source_id,
+                        document_title=additional_source.document_title,
+                        source_url=additional_source.source_url,
+                        source_sha256=additional_source.sha256,
+                        page_number=additional_evidence_page_number,
+                        section=additional_evidence_section,
+                        supporting_excerpt=additional_evidence_excerpt.strip(),
+                    )
+
+                measurement_id = "measurement-" + candidate.candidate_id.removeprefix(
+                    "candidate-"
+                )
+                measurement = Measurement(
+                    measurement_id=measurement_id,
+                    investigation_id=candidate.investigation_id,
+                    variable=candidate.variable,
+                    value=candidate.value,
+                    reported_value=candidate.reported_value,
+                    unit=candidate.unit,
+                    source_id=candidate.source_id,
+                    observation_context=candidate.observation_context,
+                    page_number=candidate.page_number,
+                    section=candidate.section,
+                    table_reference=candidate.table_reference,
+                    supporting_excerpt=candidate.supporting_excerpt,
+                    extraction_method=candidate.extraction_method,
+                    confidence=candidate.confidence,
+                    reviewed_by=reviewer.strip(),
+                    reviewed_at=reviewed_at,
+                    review_notes=review_notes,
+                )
+                existing = connection.execute(
+                    "SELECT payload FROM measurements WHERE measurement_id = ?",
+                    (measurement_id,),
+                ).fetchone()
+                if existing and (
+                    Measurement.model_validate_json(existing["payload"]) != measurement
+                ):
+                    raise ValueError(
+                        "Measurement ID already exists with different source data."
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO measurements"
+                    "(measurement_id, investigation_id, variable, payload) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        measurement.measurement_id,
+                        measurement.investigation_id,
+                        measurement.variable,
+                        measurement.model_dump_json(),
+                    ),
+                )
+
+            updated = MeasurementCandidate.model_validate(
+                {
+                    **candidate.model_dump(),
+                    "classification": updated_classification,
+                    "review_status": target_status,
+                    "reviewed_by": reviewer.strip(),
+                    "reviewed_at": reviewed_at,
+                    "review_notes": review_notes,
+                    "measurement_id": measurement_id,
+                }
+            )
+            connection.execute(
+                "UPDATE measurement_candidates "
+                "SET review_status = ?, payload = ? WHERE candidate_id = ?",
+                (
+                    updated.review_status,
+                    updated.model_dump_json(),
+                    updated.candidate_id,
+                ),
+            )
+            context_reference = candidate.observation_context.get(
+                "test", candidate.observation_context.get("run")
+            )
+            event = MeasurementReviewEvent(
+                review_event_id=f"review-{uuid4().hex}",
+                candidate_id=candidate.candidate_id,
+                reviewer=reviewer.strip(),
+                decision=decision,
+                previous_status=candidate.review_status,
+                new_status=target_status,
+                previous_classification=candidate.classification,
+                new_classification=updated_classification,
+                classification_reason=(
+                    classification_reason_text if classification_changed else None
+                ),
+                reviewed_at=reviewed_at,
+                rationale=decision_rationale,
+                evidence_notes=inspected_evidence,
+                source_review_confirmed=source_review_confirmed,
+                measurement_definition_confirmed=measurement_definition_confirmed,
+                priority_finding=audit_rationale,
+                audit_classification=audit_classification,
+                audit_quality_flags=reviewed_quality_flags,
+                figure_reference=figure_reference,
+                figure_caption_excerpt=figure_caption_excerpt,
+                priority_resolution_confirmed=priority_resolution_confirmed,
+                conflict_resolution_confirmed=conflict_resolution_confirmed,
+                zero_value_resolution_confirmed=zero_value_resolution_confirmed,
+                additional_evidence_review_confirmed=additional_evidence_review_confirmed,
+                additional_supporting_evidence=additional_supporting_evidence,
+                source_id=candidate.source_id,
+                source_url=candidate.source_url,
+                document_title=candidate.document_title,
+                source_sha256=candidate.source_sha256,
+                page_number=candidate.page_number,
+                section=candidate.section,
+                table_reference=candidate.table_reference,
+                row_reference=(
+                    str(context_reference) if context_reference is not None else None
+                ),
+                supporting_excerpt=candidate.supporting_excerpt,
+            )
+            connection.execute(
+                "INSERT INTO measurement_review_history"
+                "(review_event_id, candidate_id, reviewed_at, payload) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    event.review_event_id,
+                    event.candidate_id,
+                    event.reviewed_at.isoformat(),
+                    event.model_dump_json(),
+                ),
+            )
+        return updated
+
     def search_evidence(
         self,
         query: str,
@@ -345,6 +1059,7 @@ class SQLiteStore:
             if replace:
                 connection.execute("DELETE FROM scenario_analyses")
                 connection.execute("DELETE FROM evidence_excerpts")
+                connection.execute("DELETE FROM measurement_candidates")
                 connection.execute("DELETE FROM measurements")
                 connection.execute("DELETE FROM investigations")
             connection.executemany(

@@ -4,6 +4,7 @@ import type { HealthResponse } from "../api";
 export type AppRoute =
   | "dashboard"
   | "explorer"
+  | "investigation-detail"
   | "scenario"
   | "compare"
   | "assistant"
@@ -21,6 +22,7 @@ const navigation: { id: AppRoute; label: string; icon: string }[] = [
 const titles: Record<AppRoute, string> = {
   dashboard: "Dashboard",
   explorer: "Investigation Explorer",
+  "investigation-detail": "Investigation Detail",
   scenario: "Mission Scenario",
   compare: "Compare",
   assistant: "AI Research Assistant",
@@ -28,12 +30,25 @@ const titles: Record<AppRoute, string> = {
 };
 
 function routeFromHash(hash: string): AppRoute {
-  const route = hash.replace(/^#\/?/, "").split(/[/?]/)[0] as AppRoute;
-  return navigation.some((item) => item.id === route) ? route : "dashboard";
+  const [route] = hash.replace(/^#\/?/, "").split(/[/?]/);
+  if (route === "investigation") return "investigation-detail";
+  return navigation.find((item) => item.id === route)?.id ?? "dashboard";
 }
 
 export function readRoute(): AppRoute {
   return routeFromHash(window.location.hash);
+}
+
+export function readInvestigationId(): string | null {
+  const [, encodedId] = window.location.hash
+    .replace(/^#\/?/, "")
+    .split(/[/?]/);
+  if (!encodedId) return null;
+  try {
+    return decodeURIComponent(encodedId);
+  } catch {
+    return encodedId;
+  }
 }
 
 export function AppLayout({

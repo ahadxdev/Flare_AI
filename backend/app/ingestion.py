@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from pydantic import ValidationError
 
-from app.models import Investigation, Measurement
+from app.models import EvidenceExcerpt, Investigation, Measurement
 
 
 LIST_FIELDS = {
@@ -39,9 +41,12 @@ class IngestionReport:
     investigations_written: int = 0
     measurements_read: int = 0
     measurements_written: int = 0
+    evidence_excerpts_read: int = 0
+    evidence_excerpts_written: int = 0
     duplicate_investigations: list[str] = field(default_factory=list)
     duplicate_sources: list[str] = field(default_factory=list)
     issues: list[IngestionIssue] = field(default_factory=list)
+    indexing_issues: list[IngestionIssue] = field(default_factory=list)
 
     @property
     def valid(self) -> bool:
@@ -55,13 +60,27 @@ class IngestionReport:
             "investigations_written": self.investigations_written,
             "measurements_read": self.measurements_read,
             "measurements_written": self.measurements_written,
+            "evidence_excerpts_read": self.evidence_excerpts_read,
+            "evidence_excerpts_written": self.evidence_excerpts_written,
             "duplicate_investigations": self.duplicate_investigations,
             "duplicate_sources": self.duplicate_sources,
             "issues": [
                 {"record": issue.record, "message": issue.message}
                 for issue in self.issues
             ],
+            "indexing_issues": [
+                {"record": issue.record, "message": issue.message}
+                for issue in self.indexing_issues
+            ],
         }
+
+
+@dataclass(frozen=True)
+class IngestionBundle:
+    investigations: list[Investigation]
+    measurements: list[Measurement]
+    evidence_excerpts: list[EvidenceExcerpt]
+    report: IngestionReport
 
 
 def stable_id(prefix: str, *parts: str) -> str:
@@ -108,7 +127,8 @@ def normalize_measurement(raw: dict[str, Any]) -> Measurement:
             str(record.get("unit", "")),
         ),
     )
-    record.setdefault("conditions", {})
+    if "observation_context" not in record and "conditions" in record:
+        record["observation_context"] = record.pop("conditions")
     return Measurement.model_validate(record)
 
 
@@ -118,20 +138,36 @@ def ingest(
     source_dir: str | Path | None = None,
     archive_dir: str | Path | None = None,
 ) -> tuple[list[Investigation], list[Measurement], IngestionReport]:
+    bundle = ingest_bundle(
+        input_paths,
+        source_dir=source_dir,
+        archive_dir=archive_dir,
+    )
+    return bundle.investigations, bundle.measurements, bundle.report
+
+
+def ingest_bundle(
+    input_paths: str | Path | list[str | Path],
+    *,
+    source_dir: str | Path | None = None,
+    archive_dir: str | Path | None = None,
+) -> IngestionBundle:
     if isinstance(input_paths, (str, Path)):
         input_paths = [input_paths]
     report = IngestionReport(input_files=[str(Path(path)) for path in input_paths])
     raw_investigations: list[dict[str, Any]] = []
     raw_measurements: list[dict[str, Any]] = []
+    raw_excerpts: list[dict[str, Any]] = []
     for input_path in input_paths:
         path = Path(input_path)
         try:
-            investigations, measurements = _read_input(path)
+            investigations, measurements, excerpts = _read_input(path)
         except (OSError, ValueError, UnicodeError) as exc:
             report.issues.append(IngestionIssue(str(path), str(exc)))
             continue
         raw_investigations.extend(investigations)
         raw_measurements.extend(measurements)
+        raw_excerpts.extend(excerpts)
 
     if source_dir is not None:
         _archive_sources(Path(source_dir), archive_dir, report)
@@ -210,7 +246,38 @@ def ingest(
         seen_measurement_ids.add(measurement.measurement_id)
         measurements.append(measurement)
     report.measurements_written = len(measurements)
-    return investigations, measurements, report
+
+    evidence_excerpts: list[EvidenceExcerpt] = []
+    seen_excerpt_ids: set[str] = set()
+    sources_by_investigation = {
+        item.investigation_id: {source.source_id for source in item.sources}
+        for item in investigations
+    }
+    report.evidence_excerpts_read = len(raw_excerpts)
+    for index, raw in enumerate(raw_excerpts, start=1):
+        try:
+            excerpt = EvidenceExcerpt.model_validate(raw)
+            if excerpt.investigation_id not in sources_by_investigation:
+                raise ValueError(
+                    f"Unknown investigation_id: {excerpt.investigation_id}"
+                )
+            if excerpt.source_id not in sources_by_investigation[excerpt.investigation_id]:
+                raise ValueError(f"Unknown source_id: {excerpt.source_id}")
+        except (ValidationError, TypeError, ValueError) as exc:
+            report.issues.append(IngestionIssue(f"evidence_excerpt[{index}]", str(exc)))
+            continue
+        if excerpt.excerpt_id in seen_excerpt_ids:
+            report.issues.append(
+                IngestionIssue(
+                    f"evidence_excerpt[{index}]",
+                    f"Duplicate excerpt_id: {excerpt.excerpt_id}",
+                )
+            )
+            continue
+        seen_excerpt_ids.add(excerpt.excerpt_id)
+        evidence_excerpts.append(excerpt)
+    report.evidence_excerpts_written = len(evidence_excerpts)
+    return IngestionBundle(investigations, measurements, evidence_excerpts, report)
 
 
 def write_report(report: IngestionReport, path: str | Path) -> None:
@@ -224,14 +291,31 @@ def validate_source_files(
     investigations: list[Investigation], repository_root: str | Path | None = None
 ) -> list[IngestionIssue]:
     """Verify every declared local source file without changing it."""
-    root = Path(repository_root) if repository_root else Path.cwd()
+    root = (Path(repository_root) if repository_root else Path.cwd()).resolve()
     issues: list[IngestionIssue] = []
     for investigation in investigations:
         for source in investigation.sources:
             if not source.local_file_path:
+                if source.verification_status == "verified":
+                    issues.append(
+                        IngestionIssue(
+                            source.source_id,
+                            "A verified source must reference its preserved local file.",
+                        )
+                    )
                 continue
-            path = root / source.local_file_path
-            if not path.exists():
+            path = (root / source.local_file_path).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                issues.append(
+                    IngestionIssue(
+                        source.source_id,
+                        "Local source paths must remain inside the repository.",
+                    )
+                )
+                continue
+            if not path.is_file():
                 issues.append(
                     IngestionIssue(
                         source.source_id,
@@ -239,7 +323,8 @@ def validate_source_files(
                     )
                 )
                 continue
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            data = path.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
             if source.sha256 and digest.casefold() != source.sha256.casefold():
                 issues.append(
                     IngestionIssue(
@@ -254,30 +339,88 @@ def validate_source_files(
                         f"File size mismatch for {source.local_file_path}.",
                     )
                 )
-            if source.verification_status == "verified" and not source.sha256:
+            if source.verification_status != "verified":
+                continue
+            required_metadata = {
+                "sha256": source.sha256,
+                "file_size_bytes": source.file_size_bytes,
+                "mime_type": source.mime_type,
+                "downloaded_at": source.downloaded_at,
+                "last_verified_at": source.last_verified_at,
+            }
+            missing = [key for key, value in required_metadata.items() if value is None]
+            if missing:
                 issues.append(
                     IngestionIssue(
                         source.source_id,
-                        "A verified source file must include sha256.",
+                        "Verified source is missing provenance fields: "
+                        + ", ".join(missing),
                     )
                 )
+                continue
+            if source.mime_type == "application/pdf":
+                if not data.startswith(b"%PDF-") or b"%%EOF" not in data[-4096:]:
+                    issues.append(
+                        IngestionIssue(
+                            source.source_id,
+                            f"PDF is incomplete or invalid: {source.local_file_path}.",
+                        )
+                    )
+                    continue
+                try:
+                    reader = PdfReader(str(path), strict=True)
+                    if not reader.pages:
+                        raise ValueError("PDF has no pages.")
+                    for page in reader.pages:
+                        page.extract_text()
+                except (PdfReadError, OSError, ValueError) as exc:
+                    issues.append(
+                        IngestionIssue(
+                            source.source_id,
+                            f"PDF could not be fully parsed: {exc}",
+                        )
+                    )
+            elif source.mime_type == "application/json":
+                try:
+                    json.loads(data.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    issues.append(
+                        IngestionIssue(
+                            source.source_id,
+                            f"JSON source could not be parsed: {exc}",
+                        )
+                    )
     return issues
 
 
-def _read_input(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _read_input(
+    path: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     if path.suffix.casefold() == ".csv":
         with path.open(newline="", encoding="utf-8-sig") as handle:
-            return [_parse_csv_row(row) for row in csv.DictReader(handle)], []
+            return [_parse_csv_row(row) for row in csv.DictReader(handle)], [], []
     if path.suffix.casefold() != ".json":
         raise ValueError("Input must be a .json or .csv file.")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, list):
-        return payload, []
-    if not isinstance(payload, dict) or set(payload) - {"investigations", "measurements"}:
+        return payload, [], []
+    if not isinstance(payload, dict) or set(payload) - {
+        "investigations",
+        "measurements",
+        "evidence_excerpts",
+    }:
         raise ValueError(
-            "JSON input must be a list or contain only investigations and measurements."
+            "JSON input must be a list or contain only investigations, measurements, "
+            "and evidence_excerpts."
         )
-    return payload.get("investigations", []), payload.get("measurements", [])
+    values = [
+        payload.get("investigations", []),
+        payload.get("measurements", []),
+        payload.get("evidence_excerpts", []),
+    ]
+    if any(not isinstance(value, list) for value in values):
+        raise ValueError("JSON import fields must be arrays.")
+    return values[0], values[1], values[2]
 
 
 def _parse_csv_row(row: dict[str, str]) -> dict[str, Any]:

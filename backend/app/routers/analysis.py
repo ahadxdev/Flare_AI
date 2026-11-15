@@ -40,8 +40,9 @@ def analyze_scenario(
     responses={**ERROR_RESPONSES},
     summary="Compare investigations",
     description=(
-        "Returns requested source-backed records for side-by-side comparison. "
-        "Unavailable fields are not inferred."
+        "Compares at least two distinct indexed investigations field by field. "
+        "Raw values and units are preserved; incomplete fields and incompatible "
+        "pressure units are marked not comparable rather than converted or inferred."
     ),
 )
 def compare(

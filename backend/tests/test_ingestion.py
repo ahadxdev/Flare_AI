@@ -2,6 +2,7 @@ import json
 import hashlib
 
 import pytest
+from pypdf import PdfWriter
 
 from app.ingestion import ingest, normalize_investigation, stable_id
 from app.download_nasa_sources import _file_metadata
@@ -112,7 +113,10 @@ def test_source_provenance_fields_require_valid_hash_and_status() -> None:
 
 def test_original_pdf_metadata_requires_existing_unchanged_file(tmp_path) -> None:
     pdf = tmp_path / "source.pdf"
-    pdf.write_bytes(b"%PDF-1.7\noriginal\n%%EOF\n")
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    with pdf.open("wb") as handle:
+        writer.write(handle)
     metadata = _file_metadata(
         pdf,
         {
@@ -164,3 +168,43 @@ def test_measurement_must_reference_investigation_and_source(tmp_path) -> None:
     _, measurements, report = ingest(path)
     assert measurements == []
     assert any("Unknown source_id" in issue.message for issue in report.issues)
+
+
+def test_evidence_excerpt_must_reference_imported_investigation_and_source(
+    tmp_path,
+) -> None:
+    path = tmp_path / "orphan-excerpt.json"
+    path.write_text(
+        json.dumps(
+            {
+                "investigations": [
+                    {
+                        "investigation_id": "record-1",
+                        "title": "Record",
+                        "research_area": "other",
+                        "sources": [
+                            {
+                                "source_id": "source-1",
+                                "document_title": "Source",
+                                "source_url": "https://ntrs.nasa.gov/citations/1",
+                                "source_type": "NASA_REPORT",
+                            }
+                        ],
+                    }
+                ],
+                "evidence_excerpts": [
+                    {
+                        "excerpt_id": "excerpt-1",
+                        "investigation_id": "missing-record",
+                        "source_id": "missing-source",
+                        "excerpt": "TEST FIXTURE: orphaned excerpt.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, _, report = ingest(path)
+
+    assert any("Unknown investigation_id" in issue.message for issue in report.issues)

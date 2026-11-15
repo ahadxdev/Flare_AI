@@ -52,7 +52,11 @@ export interface InvestigationSource {
   section: string | null;
   source_type: "NASA_PSI" | "NASA_REPORT" | "NASA_DATASET" | "OTHER";
   local_file_path: string | null;
+  downloaded_at: string | null;
+  sha256: string | null;
+  file_size_bytes: number | null;
   mime_type: string | null;
+  last_verified_at: string | null;
   verification_status: SourceVerificationStatus;
 }
 
@@ -64,7 +68,11 @@ export interface SourceCitation {
   section: string | null;
   quote_or_supported_excerpt: string | null;
   local_file_path: string | null;
+  downloaded_at: string | null;
+  sha256: string | null;
+  file_size_bytes: number | null;
   mime_type: string | null;
+  last_verified_at: string | null;
   verification_status: SourceVerificationStatus;
 }
 
@@ -91,6 +99,15 @@ export interface InvestigationPage {
   page: number;
   page_size: number;
   total: number;
+}
+
+export interface InvestigationQuery {
+  q?: string;
+  research_area?: ResearchArea;
+  environment?: InvestigationEnvironment;
+  data_availability?: DataAvailability;
+  page?: number;
+  page_size?: number;
 }
 
 export interface ScenarioRequest {
@@ -132,8 +149,44 @@ export interface ComparisonRequest {
   investigation_ids: string[];
 }
 
+export interface ComparisonInvestigation {
+  investigation_id: string;
+  title: string;
+  acronym: string | null;
+  research_area: ResearchArea;
+  environment: InvestigationEnvironment;
+  data_availability: DataAvailability;
+  citations: SourceCitation[];
+}
+
+export type ComparisonFieldName =
+  | "objectives"
+  | "research_area"
+  | "environment"
+  | "conditions"
+  | "materials_or_fuels"
+  | "hardware"
+  | "sensors"
+  | "variables_measured"
+  | "findings"
+  | "data_availability";
+
+export interface ComparisonValue {
+  investigation_id: string;
+  value: string | string[] | InvestigationConditions | null;
+}
+
+export interface FieldComparison {
+  field: ComparisonFieldName;
+  status: "same" | "different" | "not_comparable";
+  values: ComparisonValue[];
+  explanation: string | null;
+}
+
 export interface ComparisonResponse {
-  investigations: Investigation[];
+  investigations: ComparisonInvestigation[];
+  field_comparisons: FieldComparison[];
+  differences_summary: string[];
   limitations: string[];
 }
 
@@ -166,13 +219,27 @@ export interface Measurement {
   investigation_id: string;
   variable: string;
   value: number;
+  reported_value: string | null;
   unit: string;
+  observation_context: Record<string, string | number | null>;
   source_id: string;
-  conditions: Record<string, string | number | null>;
+  document_title: string;
+  source_url: string;
+  page_number: number | null;
+  section: string | null;
+  table_reference: string | null;
+  supporting_excerpt: string | null;
+  extraction_method: "pdf_text" | "pdf_table_text" | "metadata_text" | "manual";
+  confidence: number | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_notes?: string | null;
 }
 
 export interface MeasurementList {
-  items: Measurement[];
+  data: Measurement[];
+  data_availability: DataAvailability;
+  message: string;
 }
 
 export interface ReportRequest {
@@ -230,6 +297,69 @@ function isErrorResponse(payload: unknown): payload is APIErrorResponse {
   );
 }
 
+function isRecord(payload: unknown): payload is Record<string, unknown> {
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload);
+}
+
+function isMeasurementPoint(payload: unknown): payload is Measurement {
+  if (!isRecord(payload)) return false;
+  let isSecureSource = false;
+  if (typeof payload.source_url === "string") {
+    try {
+      isSecureSource = new URL(payload.source_url).protocol === "https:";
+    } catch {
+      isSecureSource = false;
+    }
+  }
+  return (
+    typeof payload.measurement_id === "string" &&
+    typeof payload.investigation_id === "string" &&
+    typeof payload.variable === "string" &&
+    typeof payload.value === "number" &&
+    Number.isFinite(payload.value) &&
+    (payload.reported_value === null || typeof payload.reported_value === "string") &&
+    typeof payload.unit === "string" &&
+    typeof payload.source_id === "string" &&
+    typeof payload.document_title === "string" &&
+    isSecureSource &&
+    (payload.page_number === null ||
+      (typeof payload.page_number === "number" &&
+        Number.isInteger(payload.page_number) &&
+        payload.page_number >= 1)) &&
+    (payload.section === null || typeof payload.section === "string") &&
+    (payload.table_reference === null ||
+      typeof payload.table_reference === "string") &&
+    (payload.supporting_excerpt === null ||
+      typeof payload.supporting_excerpt === "string") &&
+    ["pdf_text", "pdf_table_text", "metadata_text", "manual"].includes(
+      String(payload.extraction_method),
+    ) &&
+    (payload.confidence === null ||
+      (typeof payload.confidence === "number" &&
+        Number.isFinite(payload.confidence) &&
+        payload.confidence >= 0 &&
+        payload.confidence <= 1)) &&
+    (payload.reviewed_by === null || typeof payload.reviewed_by === "string") &&
+    (payload.reviewed_at === null || typeof payload.reviewed_at === "string") &&
+    (payload.review_notes === undefined ||
+      payload.review_notes === null ||
+      typeof payload.review_notes === "string") &&
+    isRecord(payload.observation_context)
+  );
+}
+
+function isMeasurementList(payload: unknown): payload is MeasurementList {
+  return (
+    isRecord(payload) &&
+    Array.isArray(payload.data) &&
+    payload.data.every(isMeasurementPoint) &&
+    ["metadata_only", "documents", "numeric_dataset", "unknown"].includes(
+      String(payload.data_availability),
+    ) &&
+    typeof payload.message === "string"
+  );
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -269,7 +399,11 @@ export const api = {
   health(): Promise<HealthResponse> {
     return request<HealthResponse>("/api/health");
   },
-  investigations(params: URLSearchParams = new URLSearchParams()): Promise<InvestigationPage> {
+  investigations(query: InvestigationQuery = {}): Promise<InvestigationPage> {
+    const params = new URLSearchParams();
+    for (const [field, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(field, String(value));
+    }
     return request<InvestigationPage>(`/api/investigations?${params}`);
   },
   investigation(id: string): Promise<Investigation> {
@@ -294,7 +428,15 @@ export const api = {
     });
   },
   measurements(params: URLSearchParams = new URLSearchParams()): Promise<MeasurementList> {
-    return request<MeasurementList>(`/api/measurements?${params}`);
+    return request<unknown>(`/api/measurements?${params}`).then((payload) => {
+      if (!isMeasurementList(payload)) {
+        throw new APIRequestError(
+          "The API returned an incompatible measurements response. Restart the backend to load the current contract.",
+          502,
+        );
+      }
+      return payload;
+    });
   },
   report(requestBody: ReportRequest): Promise<ReportResponse> {
     return request<ReportResponse>("/api/reports", {

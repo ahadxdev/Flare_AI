@@ -1,19 +1,33 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   api,
+  APIRequestError,
   type ChatResponse,
+  type ComparisonFieldName,
   type ComparisonResponse,
+  type FieldComparison,
+  type DataAvailability,
   type HealthResponse,
   type Investigation,
+  type InvestigationConditions,
   type InvestigationPage,
+  type InvestigationQuery,
   type InvestigationSource,
+  type InvestigationEnvironment,
+  type Measurement,
   type MeasurementList,
+  type ResearchArea,
   type ReportResponse,
   type ScenarioAnalysisResponse,
   type ScenarioRequest,
   type SourceCitation,
 } from "./api";
-import { AppLayout, readRoute, type AppRoute } from "./components/AppLayout";
+import {
+  AppLayout,
+  readInvestigationId,
+  readRoute,
+  type AppRoute,
+} from "./components/AppLayout";
 import { DashboardView } from "./components/DashboardView";
 import {
   EmptyState,
@@ -23,6 +37,23 @@ import {
 } from "./components/AsyncState";
 
 type ExplorerTab = "investigations" | "measurements";
+type InvestigationDetailState =
+  | RemoteState<Investigation>
+  | { status: "not_found" };
+
+interface ExplorerFilters {
+  research_area: ResearchArea | "";
+  environment: InvestigationEnvironment | "";
+  data_availability: DataAvailability | "";
+}
+
+const emptyFilters: ExplorerFilters = {
+  research_area: "",
+  environment: "",
+  data_availability: "",
+};
+
+const EXPLORER_PAGE_SIZE = 20;
 
 const initialScenario: ScenarioRequest = {
   environment: "lunar_habitat",
@@ -34,6 +65,11 @@ const initialScenario: ScenarioRequest = {
 
 function App() {
   const [route, setRoute] = useState<AppRoute>(readRoute);
+  const [investigationId, setInvestigationId] =
+    useState<string | null>(readInvestigationId);
+  const [detailState, setDetailState] =
+    useState<InvestigationDetailState>({ status: "loading" });
+  const [detailRetry, setDetailRetry] = useState(0);
   const [health, setHealth] = useState<RemoteState<HealthResponse>>({
     status: "loading",
   });
@@ -45,10 +81,11 @@ function App() {
     useState<RemoteState<MeasurementList>>({ status: "loading" });
   const [explorerTab, setExplorerTab] =
     useState<ExplorerTab>("investigations");
-  const [selected, setSelected] = useState<Investigation | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<ExplorerFilters>(emptyFilters);
+  const [page, setPage] = useState(1);
   const [scenario, setScenario] = useState(initialScenario);
   const [analysis, setAnalysis] = useState<ScenarioAnalysisResponse | null>(null);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
@@ -72,15 +109,13 @@ function App() {
   };
 
   const loadCatalog = async (
-    term = "",
+    query: InvestigationQuery,
     updateDashboard = false,
   ): Promise<void> => {
     setExplorerCatalog({ status: "loading" });
     if (updateDashboard) setDashboardCatalog({ status: "loading" });
-    const params = new URLSearchParams({ page: "1", page_size: "100" });
-    if (term.trim()) params.set("q", term.trim());
     try {
-      const data = await api.investigations(params);
+      const data = await api.investigations(query);
       setExplorerCatalog({ status: "ready", data });
       if (updateDashboard) setDashboardCatalog({ status: "ready", data });
     } catch (reason) {
@@ -110,12 +145,52 @@ function App() {
 
   useEffect(() => {
     void loadHealth();
-    void loadCatalog("", true);
+    void loadCatalog({ page: 1, page_size: EXPLORER_PAGE_SIZE }, true);
     void loadMeasurements();
-    const updateRoute = () => setRoute(readRoute());
+    const updateRoute = () => {
+      setRoute(readRoute());
+      setInvestigationId(readInvestigationId());
+    };
     window.addEventListener("hashchange", updateRoute);
     return () => window.removeEventListener("hashchange", updateRoute);
   }, []);
+
+  useEffect(() => {
+    if (route !== "investigation-detail") return;
+    let active = true;
+    if (!investigationId) {
+      setDetailState({ status: "not_found" });
+      return;
+    }
+
+    setDetailState({ status: "loading" });
+    void api
+      .investigation(investigationId)
+      .then((data) => {
+        if (active) setDetailState({ status: "ready", data });
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        if (
+          reason instanceof APIRequestError &&
+          (reason.status === 404 || reason.code === "NOT_FOUND")
+        ) {
+          setDetailState({ status: "not_found" });
+          return;
+        }
+        const message =
+          reason instanceof APIRequestError && reason.status >= 500
+            ? `Server error: ${reason.message}`
+            : reason instanceof Error
+              ? reason.message
+              : "Unable to load this investigation.";
+        setDetailState({ status: "error", message });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [route, investigationId, detailRetry]);
 
   const navigate = (nextRoute: AppRoute) => {
     setError("");
@@ -165,7 +240,43 @@ function App() {
   const retryDashboardCatalog = () => {
     setQuery("");
     setSearch("");
-    void loadCatalog("", true);
+    setFilters(emptyFilters);
+    setPage(1);
+    void loadCatalog({ page: 1, page_size: EXPLORER_PAGE_SIZE }, true);
+  };
+  const explorerQuery = (
+    targetPage: number,
+    term = search,
+    activeFilters = filters,
+  ): InvestigationQuery => ({
+    q: term || undefined,
+    research_area: activeFilters.research_area || undefined,
+    environment: activeFilters.environment || undefined,
+    data_availability: activeFilters.data_availability || undefined,
+    page: targetPage,
+    page_size: EXPLORER_PAGE_SIZE,
+  });
+  const applyExplorerQuery = (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    const nextSearch = query.trim();
+    setSearch(nextSearch);
+    setPage(1);
+    void loadCatalog(explorerQuery(1, nextSearch));
+  };
+  const requestExplorerPage = (nextPage: number) => {
+    setPage(nextPage);
+    void loadCatalog(explorerQuery(nextPage));
+  };
+  const retryExplorer = () => {
+    void loadCatalog(explorerQuery(page));
+  };
+  const navigateToInvestigation = (id: string) => {
+    const hash = `#investigation/${encodeURIComponent(id)}`;
+    if (window.location.hash !== hash) window.location.hash = hash;
+    setRoute("investigation-detail");
+    setInvestigationId(id);
   };
 
   return (
@@ -202,25 +313,35 @@ function App() {
           catalog={explorerCatalog}
           records={records}
           measurements={measurements}
-          selected={selected}
           selectedIds={selectedIds}
           query={query}
+          filters={filters}
+          page={page}
           total={
             explorerCatalog.status === "ready"
               ? explorerCatalog.data.total
               : undefined
           }
           onQueryChange={setQuery}
-          onSearch={(event) => {
-            event.preventDefault();
-            setSearch(query);
-            void loadCatalog(query);
-          }}
-          onRetry={() => void loadCatalog(search)}
+          onFiltersChange={setFilters}
+          onSearch={applyExplorerQuery}
+          onPageChange={requestExplorerPage}
+          onRetry={retryExplorer}
           onRetryMeasurements={() => void loadMeasurements()}
-          onSelect={setSelected}
           onToggleSelected={toggleSelected}
           onNavigate={navigate}
+          onOpenInvestigation={navigateToInvestigation}
+        />
+      )}
+
+      {route === "investigation-detail" && (
+        <InvestigationDetailPage
+          state={detailState}
+          selected={detailState.status === "ready" && selectedIds.includes(detailState.data.investigation_id)}
+          canSelect={selectedIds.length < 5}
+          onRetry={() => setDetailRetry((attempt) => attempt + 1)}
+          onBack={() => navigate("explorer")}
+          onToggleComparison={(id) => toggleSelected(id)}
         />
       )}
 
@@ -260,18 +381,14 @@ function App() {
           busy={busy}
           onAsk={(event) => {
             event.preventDefault();
-<<<<<<< Updated upstream
             void run(
-              () => api.chat({ question, investigation_ids: selectedIds }),
+              () =>
+                api.chat({
+                  question,
+                  scenario_id: analysis?.scenario_id ?? null,
+                  investigation_ids: selectedIds,
+                }),
               setChatResponse,
-=======
-            void run(() => api.chat({
-              question,
-              scenario_id: analysis?.scenario_id ?? null,
-              investigation_ids: [],
-            }), (result) =>
-              setAnswer(result.answer),
->>>>>>> Stashed changes
             );
           }}
         />
@@ -301,34 +418,40 @@ function ExplorerPage({
   catalog,
   records,
   measurements,
-  selected,
   selectedIds,
   query,
+  filters,
+  page,
   total,
   onQueryChange,
+  onFiltersChange,
   onSearch,
+  onPageChange,
   onRetry,
   onRetryMeasurements,
-  onSelect,
   onToggleSelected,
   onNavigate,
+  onOpenInvestigation,
 }: {
   tab: ExplorerTab;
   onTabChange: (tab: ExplorerTab) => void;
   catalog: RemoteState<InvestigationPage>;
   records: Investigation[];
   measurements: RemoteState<MeasurementList>;
-  selected: Investigation | null;
   selectedIds: string[];
   query: string;
+  filters: ExplorerFilters;
+  page: number;
   total: number | undefined;
   onQueryChange: (query: string) => void;
+  onFiltersChange: (filters: ExplorerFilters) => void;
   onSearch: (event: FormEvent<HTMLFormElement>) => void;
+  onPageChange: (page: number) => void;
   onRetry: () => void;
   onRetryMeasurements: () => void;
-  onSelect: (record: Investigation) => void;
   onToggleSelected: (id: string) => void;
   onNavigate: (route: AppRoute) => void;
+  onOpenInvestigation: (id: string) => void;
 }) {
   return (
     <section className="panel records-panel">
@@ -367,7 +490,7 @@ function ExplorerPage({
 
       {tab === "investigations" ? (
         <div id="records-panel" role="tabpanel" aria-labelledby="records-tab">
-          <form className="search-row" onSubmit={onSearch}>
+          <form className="explorer-filters" onSubmit={onSearch}>
             <label className="search-box">
               <span aria-hidden="true">⌕</span>
               <input
@@ -377,8 +500,64 @@ function ExplorerPage({
                 onChange={(event) => onQueryChange(event.target.value)}
               />
             </label>
+            <label>
+              Research area
+              <select
+                value={filters.research_area}
+                onChange={(event) =>
+                  onFiltersChange({
+                    ...filters,
+                    research_area: event.target.value as ExplorerFilters["research_area"],
+                  })
+                }
+              >
+                <option value="">All research areas</option>
+                <option value="prevention">Prevention</option>
+                <option value="detection">Detection</option>
+                <option value="suppression">Suppression</option>
+                <option value="fundamentals">Fundamentals</option>
+                <option value="related">Related</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              Environment
+              <select
+                value={filters.environment}
+                onChange={(event) =>
+                  onFiltersChange({
+                    ...filters,
+                    environment: event.target.value as ExplorerFilters["environment"],
+                  })
+                }
+              >
+                <option value="">All environments</option>
+                <option value="microgravity">Microgravity</option>
+                <option value="normal_gravity">Normal gravity</option>
+                <option value="other">Other</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+            <label>
+              Data availability
+              <select
+                value={filters.data_availability}
+                onChange={(event) =>
+                  onFiltersChange({
+                    ...filters,
+                    data_availability: event.target.value as ExplorerFilters["data_availability"],
+                  })
+                }
+              >
+                <option value="">All availability</option>
+                <option value="metadata_only">Metadata only</option>
+                <option value="documents">Documents</option>
+                <option value="numeric_dataset">Numeric dataset</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
             <button className="button secondary" type="submit">
-              Search
+              Apply filters
             </button>
           </form>
 
@@ -395,70 +574,81 @@ function ExplorerPage({
                 detail="The connected catalog has no matching records. FLARE AI does not add sample or invented NASA data."
               />
             ) : (
-              <div className="layout-two explorer-layout">
-                <div>
-                  <div className="record-list">
-                    {records.map((item) => (
-                      <article
-                        className={`record-card ${selected?.investigation_id === item.investigation_id ? "chosen" : ""}`}
-                        key={item.investigation_id}
-                      >
-                        <button
-                          className="record-main"
-                          onClick={() => onSelect(item)}
-                        >
-                          <div className="record-top">
-                            <span className="tag">{item.research_area}</span>
-                            <span className="record-id">
-                              {item.investigation_id}
-                            </span>
-                          </div>
-                          <h3>{item.title}</h3>
-                          <div className="record-meta">
-                            {item.environment.replace("_", " ")}
-                            <span aria-hidden="true">·</span>
-                            {item.data_availability.replace("_", " ")}
-                          </div>
-                        </button>
-                        <label className="compare-check">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(item.investigation_id)}
-                            onChange={() =>
-                              onToggleSelected(item.investigation_id)
-                            }
-                            aria-label={`Select ${item.title} for comparison`}
-                          />
-                        </label>
-                      </article>
-                    ))}
-                  </div>
-                  {selectedIds.length > 0 && (
-                    <button
-                      className="button primary wide"
-                      onClick={() => onNavigate("compare")}
+              <>
+                <div className="record-list">
+                  {records.map((item) => (
+                    <article
+                      className="record-card"
+                      key={item.investigation_id}
                     >
-                      Compare selected ({selectedIds.length})
-                    </button>
-                  )}
+                      <button
+                        className="record-main"
+                        aria-label={`View investigation ${item.title} (${item.investigation_id})`}
+                        onClick={() =>
+                          onOpenInvestigation(item.investigation_id)
+                        }
+                      >
+                        <div className="record-top">
+                          <span className="tag">{item.research_area}</span>
+                          {item.acronym && (
+                            <span className="tag quiet">{item.acronym}</span>
+                          )}
+                          <span className="record-id">
+                            {item.investigation_id}
+                          </span>
+                        </div>
+                        <h3>{item.title}</h3>
+                        <div className="record-meta">
+                          <span>Environment: {displayEnum(item.environment)}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Data availability: {displayEnum(item.data_availability)}
+                          </span>
+                        </div>
+                      </button>
+                      <label className="compare-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(item.investigation_id)}
+                          onChange={() =>
+                            onToggleSelected(item.investigation_id)
+                          }
+                          aria-label={`Select ${item.title} for comparison`}
+                        />
+                      </label>
+                    </article>
+                  ))}
                 </div>
-                <section className="panel detail-panel" aria-live="polite">
-                  {selected ? (
-                    <RecordDetail item={selected} />
-                  ) : (
-                    <div className="detail-placeholder">
-                      <span className="detail-icon" aria-hidden="true">◉</span>
-                      <h3>Select an investigation</h3>
-                      <p>
-                        Review indexed conditions, measurements, findings and
-                        source provenance.
-                      </p>
-                      <div className="mini-rule" />
-                      <small>Only verified source data is displayed.</small>
-                    </div>
-                  )}
-                </section>
-              </div>
+                {total !== undefined && (
+                  <nav className="pagination" aria-label="Investigation pages">
+                    <button
+                      className="button secondary"
+                      disabled={page <= 1}
+                      onClick={() => onPageChange(page - 1)}
+                    >
+                      Previous
+                    </button>
+                    <span>
+                      Page {page} of {Math.max(1, Math.ceil(total / EXPLORER_PAGE_SIZE))}
+                    </span>
+                    <button
+                      className="button secondary"
+                      disabled={page >= Math.ceil(total / EXPLORER_PAGE_SIZE)}
+                      onClick={() => onPageChange(page + 1)}
+                    >
+                      Next
+                    </button>
+                  </nav>
+                )}
+                {selectedIds.length > 0 && (
+                  <button
+                    className="button primary wide"
+                    onClick={() => onNavigate("compare")}
+                  >
+                    Compare selected ({selectedIds.length})
+                  </button>
+                )}
+              </>
             ))}
         </div>
       ) : (
@@ -477,15 +667,63 @@ function ExplorerPage({
             />
           )}
           {measurements.status === "ready" &&
-            (measurements.data.items.length === 0 ? (
+            (measurements.data.data.length === 0 ? (
               <EmptyState
-                title="No verified measurements indexed"
-                detail="Numeric values appear only when their original source, unit and investigation are verified and indexed."
+                title={`No verified measurements indexed (${displayEnum(measurements.data.data_availability)})`}
+                detail={measurements.data.message}
               />
             ) : (
-              <MeasurementsTable measurements={measurements.data} />
+              <MeasurementsView measurements={measurements.data} />
             ))}
         </div>
+      )}
+    </section>
+  );
+}
+
+function InvestigationDetailPage({
+  state,
+  selected,
+  canSelect,
+  onRetry,
+  onBack,
+  onToggleComparison,
+}: {
+  state: InvestigationDetailState;
+  selected: boolean;
+  canSelect: boolean;
+  onRetry: () => void;
+  onBack: () => void;
+  onToggleComparison: (id: string) => void;
+}) {
+  return (
+    <section className="panel detail-page">
+      <button className="button secondary detail-back" onClick={onBack}>
+        Back to Investigation Explorer
+      </button>
+      {state.status === "loading" && (
+        <LoadingState label="Loading investigation details…" />
+      )}
+      {state.status === "not_found" && (
+        <EmptyState
+          title="Investigation not found"
+          detail="This investigation ID is not available in the indexed catalog."
+        >
+          <button className="button secondary" onClick={onBack}>
+            Return to Investigation Explorer
+          </button>
+        </EmptyState>
+      )}
+      {state.status === "error" && (
+        <ErrorState message={state.message} onRetry={onRetry} />
+      )}
+      {state.status === "ready" && (
+        <RecordDetail
+          item={state.data}
+          selected={selected}
+          canSelect={canSelect}
+          onToggleComparison={onToggleComparison}
+        />
       )}
     </section>
   );
@@ -698,13 +936,25 @@ function ComparePage({
       {selectedIds.length === 0 ? (
         <EmptyState
           title="Choose records to compare"
-          detail="Select up to five records from the Investigation Explorer."
+          detail="Select at least two records by investigation ID in the Investigation Explorer."
         >
           <button
             className="button secondary"
             onClick={() => onNavigate("explorer")}
           >
             Open Investigation Explorer
+          </button>
+        </EmptyState>
+      ) : selectedIds.length < 2 ? (
+        <EmptyState
+          title="Select one more investigation"
+          detail="A field-by-field comparison requires at least two distinct investigation IDs."
+        >
+          <button
+            className="button secondary"
+            onClick={() => onNavigate("explorer")}
+          >
+            Select another investigation
           </button>
         </EmptyState>
       ) : (
@@ -714,34 +964,125 @@ function ComparePage({
           </button>
           {comparison && (
             <>
-              <div className="comparison-grid">
+              <NoticeList
+                title="Differences summary"
+                items={comparison.differences_summary}
+              />
+              <div className="table-scroll comparison-table-wrap">
+                <table className="comparison-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Field</th>
+                      <th scope="col">Comparison</th>
+                      {comparison.investigations.map((item) => (
+                        <th scope="col" key={item.investigation_id}>
+                          <span>{item.title}</span>
+                          <small>{item.investigation_id}</small>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparison.field_comparisons.map((field) => (
+                      <tr key={field.field}>
+                        <th scope="row">{comparisonFieldLabel(field.field)}</th>
+                        <td>
+                          <span className={`comparison-status ${field.status}`}>
+                            {comparisonStatusLabel(field.status)}
+                          </span>
+                          {field.explanation && (
+                            <small className="comparison-explanation">
+                              {field.explanation}
+                            </small>
+                          )}
+                        </td>
+                        {comparison.investigations.map((item) => {
+                          const fieldValue = field.values.find(
+                            (value) => value.investigation_id === item.investigation_id,
+                          );
+                          return (
+                            <td key={item.investigation_id}>
+                              {formatComparisonValue(
+                                field.field,
+                                fieldValue?.value ?? null,
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="comparison-sources">
                 {comparison.investigations.map((item) => (
-                  <div className="comparison-card" key={item.investigation_id}>
+                  <section
+                    className="comparison-source-card"
+                    key={item.investigation_id}
+                    aria-label={`Sources for ${item.title}`}
+                  >
                     <h3>{item.title}</h3>
-                    <Info label="Research area" value={item.research_area} />
-                    <Info label="Environment" value={item.environment} />
-                    <Info
-                      label="Materials/fuels"
-                      value={item.materials_or_fuels.join(", ")}
-                    />
-                    <Info
-                      label="Measured variables"
-                      value={item.variables_measured.join(", ")}
-                    />
-                    <Info label="Data availability" value={item.data_availability} />
-                    <div className="info-row">
-                      <span>Sources</span>
-                      <CitationList citations={item.sources} />
-                    </div>
-                  </div>
+                    <p className="record-id">{item.investigation_id}</p>
+                    <CitationList citations={item.citations} />
+                  </section>
                 ))}
               </div>
-              <NoticeList title="Comparison limitations" items={comparison.limitations} />
+              <NoticeList
+                title="Comparison limitations"
+                items={comparison.limitations}
+              />
             </>
           )}
         </>
       )}
     </section>
+  );
+}
+
+function comparisonFieldLabel(field: ComparisonFieldName): string {
+  return field.replace(/_/g, " ");
+}
+
+function comparisonStatusLabel(status: FieldComparison["status"]): string {
+  if (status === "same") return "Same (reported values)";
+  if (status === "different") return "Different";
+  return "Not comparable / missing";
+}
+
+function formatComparisonValue(
+  field: ComparisonFieldName,
+  value: string | string[] | InvestigationConditions | null,
+): string {
+  if (value === null) return "Not reported";
+  if (Array.isArray(value)) {
+    return value.length ? value.join("; ") : "Not reported";
+  }
+  if (typeof value === "string") {
+    return value === "unknown" ? "Not reported" : value;
+  }
+  if (field === "conditions" && isInvestigationConditions(value)) {
+    const pressure =
+      value.pressure.value == null || value.pressure.unit == null
+        ? "Not reported"
+        : `${value.pressure.value} ${value.pressure.unit}`;
+    return [
+      `Oxygen: ${value.oxygen_pct == null ? "Not reported" : `${value.oxygen_pct}%`}`,
+      `Pressure: ${pressure}`,
+      `Other: ${value.other.length ? value.other.join("; ") : "Not reported"}`,
+    ].join(" · ");
+  }
+  return "Not reported";
+}
+
+function isInvestigationConditions(
+  value: InvestigationConditions,
+): value is InvestigationConditions {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "oxygen_pct" in value &&
+    "pressure" in value &&
+    "other" in value
   );
 }
 
@@ -872,54 +1213,83 @@ function BriefPage({
   );
 }
 
-function RecordDetail({ item }: { item: Investigation }) {
+function RecordDetail({
+  item,
+  selected,
+  canSelect,
+  onToggleComparison,
+}: {
+  item: Investigation;
+  selected: boolean;
+  canSelect: boolean;
+  onToggleComparison: (id: string) => void;
+}) {
   return (
     <div className="detail-content">
       <p className="eyebrow">INVESTIGATION RECORD</p>
       <h2>{item.title}</h2>
+      <p className="record-id">{item.investigation_id}</p>
       <div className="detail-tags">
         <span className="tag">{item.research_area}</span>
         <span className="tag quiet">
-          {item.data_availability.replace("_", " ")}
+          {displayEnum(item.data_availability)}
         </span>
       </div>
-      <p className="record-id">{item.investigation_id}</p>
-      <Info label="Environment" value={item.environment} />
+      <div className="detail-actions">
+        <button
+          className="button secondary"
+          aria-pressed={selected}
+          disabled={!selected && !canSelect}
+          onClick={() => onToggleComparison(item.investigation_id)}
+        >
+          {selected
+            ? "Remove from comparison"
+            : canSelect
+              ? "Select for comparison"
+              : "Comparison selection limit reached"}
+        </button>
+      </div>
+      <Info label="Acronym" value={item.acronym} />
+      <Info label="Environment" value={displayEnum(item.environment)} />
+      <Info
+        label="Data availability"
+        value={displayEnum(item.data_availability)}
+      />
+      <DetailList title="Objectives" items={item.objectives} />
       <Info
         label="Materials or fuels"
-        value={item.materials_or_fuels.join(", ")}
+        value={joinedOrMissing(item.materials_or_fuels)}
       />
       <Info
         label="Oxygen"
-        value={
-          item.conditions.oxygen_pct == null
-            ? ""
-            : `${item.conditions.oxygen_pct}%`
-        }
+        value={item.conditions.oxygen_pct == null
+          ? null
+          : `${item.conditions.oxygen_pct}%`}
       />
       <Info
         label="Pressure"
-        value={
-          item.conditions.pressure.value == null
-            ? ""
-            : `${item.conditions.pressure.value} ${item.conditions.pressure.unit}`
-        }
+        value={formatPressure(item.conditions.pressure)}
       />
       <Info
         label="Additional conditions"
-        value={item.conditions.other.join(" ")}
+        value={joinedOrMissing(item.conditions.other)}
       />
       <Info
         label="Last verified"
-        value={item.last_verified_at ?? ""}
+        value={item.last_verified_at}
       />
-      <Info label="Hardware" value={item.hardware.join(", ")} />
-      <Info label="Sensors" value={item.sensors.join(", ")} />
+      <Info
+        label="Hardware"
+        value={joinedOrMissing(item.hardware)}
+      />
+      <Info
+        label="Sensors"
+        value={joinedOrMissing(item.sensors)}
+      />
       <Info
         label="Measured variables"
-        value={item.variables_measured.join(", ")}
+        value={joinedOrMissing(item.variables_measured)}
       />
-      <DetailList title="Objectives" items={item.objectives} />
       <DetailList title="Findings" items={item.findings} />
       <div className="detail-section">
         <h3>Sources <span>{item.sources.length}</span></h3>
@@ -934,6 +1304,157 @@ function RecordDetail({ item }: { item: Investigation }) {
   );
 }
 
+function displayEnum(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function joinedOrMissing(values: string[]): string | null {
+  return values.length ? values.join(", ") : null;
+}
+
+function formatPressure(pressure: Investigation["conditions"]["pressure"]): string | null {
+  if (pressure.value == null || !pressure.unit) return null;
+  return `${pressure.value} ${pressure.unit}`;
+}
+
+function MeasurementsView({ measurements }: { measurements: MeasurementList }) {
+  const groups = new Map<string, Measurement[]>();
+  for (const point of measurements.data) {
+    const key = `${point.variable}\u0000${point.unit}`;
+    groups.set(key, [...(groups.get(key) ?? []), point]);
+  }
+
+  return (
+    <div className="measurements-view">
+      <p className="measurement-observation-note" role="note">
+        Plotted data are reported observations, not predictions.
+      </p>
+      {[...groups.values()].map((points) => (
+        <MeasurementChart
+          key={`${points[0].variable}\u0000${points[0].unit}`}
+          points={points}
+        />
+      ))}
+      <MeasurementsTable measurements={measurements} />
+    </div>
+  );
+}
+
+function MeasurementChart({ points }: { points: Measurement[] }) {
+  const width = 720;
+  const height = 260;
+  const margin = { top: 20, right: 20, bottom: 58, left: 76 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const values = points.map((point) => point.value);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const span = maximum - minimum || Math.max(Math.abs(minimum) * 0.1, 1);
+  const lower = minimum - span * 0.08;
+  const upper = maximum + span * 0.08;
+  const range = upper - lower;
+  const y = (value: number) =>
+    margin.top + ((upper - value) / range) * plotHeight;
+  const ticks = Array.from({ length: 5 }, (_, index) => {
+    const value = lower + (range * index) / 4;
+    return { value, y: y(value) };
+  });
+
+  return (
+    <figure className="measurement-chart">
+      <figcaption>
+        <strong>{points[0].variable}</strong>
+        <span>
+          Reported observations · {points[0].unit} · Sources:{" "}
+          {[...new Set(points.map((point) => point.source_id))].join(", ")}
+        </span>
+      </figcaption>
+      <div className="measurement-chart-scroll">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`${points[0].variable} reported observations, vertical axis in ${points[0].unit}, horizontal axis by investigation. Sources: ${[...new Set(points.map((point) => point.source_id))].join(", ")}`}
+        >
+          {ticks.map((tick) => (
+            <g key={tick.value}>
+              <line
+                x1={margin.left}
+                x2={width - margin.right}
+                y1={tick.y}
+                y2={tick.y}
+                className="measurement-gridline"
+              />
+              <text
+                x={margin.left - 10}
+                y={tick.y + 4}
+                textAnchor="end"
+                className="measurement-tick"
+              >
+                {Number(tick.value.toPrecision(3))}
+              </text>
+            </g>
+          ))}
+          <line
+            x1={margin.left}
+            x2={margin.left}
+            y1={margin.top}
+            y2={height - margin.bottom}
+            className="measurement-axis"
+          />
+          <line
+            x1={margin.left}
+            x2={width - margin.right}
+            y1={height - margin.bottom}
+            y2={height - margin.bottom}
+            className="measurement-axis"
+          />
+          <text
+            transform={`translate(18 ${margin.top + plotHeight / 2}) rotate(-90)`}
+            textAnchor="middle"
+            className="measurement-axis-label"
+          >
+            Value ({points[0].unit})
+          </text>
+          <text
+            x={margin.left + plotWidth / 2}
+            y={height - 8}
+            textAnchor="middle"
+            className="measurement-axis-label"
+          >
+            Investigation
+          </text>
+          {points.map((point, index) => {
+            const x =
+              margin.left + ((index + 1) / (points.length + 1)) * plotWidth;
+            return (
+              <g key={point.measurement_id}>
+                <circle
+                  cx={x}
+                  cy={y(point.value)}
+                  r={5}
+                  className="measurement-point"
+                >
+                  <title>
+                    {`${point.investigation_id}: ${point.reported_value ?? point.value} ${point.unit}; ${point.document_title} (${point.source_id})`}
+                  </title>
+                </circle>
+                <text
+                  x={x}
+                  y={height - margin.bottom + 18}
+                  textAnchor="middle"
+                  className="measurement-tick"
+                >
+                  {point.investigation_id}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </figure>
+  );
+}
+
 function MeasurementsTable({ measurements }: { measurements: MeasurementList }) {
   return (
     <div className="table-scroll">
@@ -944,17 +1465,61 @@ function MeasurementsTable({ measurements }: { measurements: MeasurementList }) 
             <th>Variable</th>
             <th>Value</th>
             <th>Unit</th>
-            <th>Source ID</th>
+            <th>Observation context</th>
+            <th>Source</th>
+            <th>Location and evidence</th>
           </tr>
         </thead>
         <tbody>
-          {measurements.items.map((item) => (
+          {measurements.data.map((item) => (
             <tr key={item.measurement_id}>
               <td>{item.investigation_id}</td>
               <td>{item.variable}</td>
-              <td>{item.value}</td>
+              <td>{item.reported_value ?? item.value}</td>
               <td>{item.unit}</td>
-              <td>{item.source_id}</td>
+              <td>
+                {Object.keys(item.observation_context).length
+                  ? Object.entries(item.observation_context)
+                      .map(([key, value]) => `${key}: ${value ?? "Not reported"}`)
+                      .join("; ")
+                  : "Not reported"}
+              </td>
+              <td>
+                <a href={item.source_url} target="_blank" rel="noreferrer">
+                  {item.document_title}
+                </a>
+                <small className="measurement-source-id">{item.source_id}</small>
+              </td>
+              <td>
+                {[
+                  item.page_number && `PDF p. ${item.page_number}`,
+                  item.section,
+                  item.table_reference,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Not reported"}
+                {item.supporting_excerpt && (
+                  <details className="measurement-evidence">
+                    <summary>Supporting excerpt</summary>
+                    <blockquote>{item.supporting_excerpt}</blockquote>
+                  </details>
+                )}
+                {item.reviewed_by ? (
+                  <small className="measurement-reviewer">
+                    Reviewed by {item.reviewed_by}
+                  </small>
+                ) : (
+                  <small className="measurement-reviewer">
+                    Reviewer attribution not reported
+                  </small>
+                )}
+                {item.review_notes && (
+                  <details className="measurement-evidence">
+                    <summary>Review audit note</summary>
+                    <blockquote>{item.review_notes}</blockquote>
+                  </details>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -970,17 +1535,23 @@ function DetailList({ title, items }: { title: string; items: string[] }) {
       {items.length > 0 ? (
         <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
       ) : (
-        <p className="muted">Not available in indexed sources.</p>
+        <p className="muted">Not reported</p>
       )}
     </div>
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
   return (
     <div className="info-row">
       <span>{label}</span>
-      <strong>{value || "Not available in indexed sources"}</strong>
+      <strong>{value || "Not reported"}</strong>
     </div>
   );
 }
@@ -991,7 +1562,7 @@ function CitationList({
   citations: (InvestigationSource | SourceCitation)[];
 }) {
   if (!citations.length) {
-    return <p className="muted small">No source citations indexed.</p>;
+    return <p className="muted small">Not reported</p>;
   }
   return (
     <ul className="citation-list">
