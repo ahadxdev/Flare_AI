@@ -5,7 +5,7 @@ evidence-first science-intelligence prototype for exploring NASA Physical
 Sciences Informatics (PSI) microgravity combustion research. It ranks research
 relevance, not fire risk, and does not treat microgravity findings as proven
 lunar or Martian partial-gravity performance. FLARE AI is not an official NASA
-system.
+system and is not affiliated with or endorsed by NASA.
 
 The prototype includes a React/TypeScript client and a modular FastAPI backend
 using shared Pydantic models and a local SQLite catalog. Its current starter
@@ -19,6 +19,8 @@ until approved.
 
 See [Development](docs/development.md) for environment setup, source import,
 run commands, environment variables, and validation.
+For the production build, container commands, health checks, and local-data
+fallback, follow [Hackathon deployment](docs/deployment.md).
 
 ## Environment variables
 
@@ -28,7 +30,9 @@ setting in development; Vite proxies it to the backend. The backend reads
 `FLARE_CORS_ALLOW_HEADERS`, `FLARE_CORS_ALLOW_CREDENTIALS`,
 `FLARE_LOG_LEVEL`, and `FLARE_DATABASE_PATH`. Optional chat synthesis uses
 `FLARE_LLM_API_KEY`, `FLARE_LLM_MODEL`, `FLARE_LLM_BASE_URL`, and
-`FLARE_LLM_TIMEOUT_SECONDS`. Copy `.env.example` to `.env`; see
+`FLARE_LLM_TIMEOUT_SECONDS`. Production startup also supports local seeding,
+static frontend serving, and request limits documented in
+[Hackathon deployment](docs/deployment.md). Copy `.env.example` to `.env`; see
 [Development](docs/development.md#environment-variables) for descriptions and
 defaults. Keep provider credentials out of version control.
 
@@ -36,6 +40,7 @@ defaults. Keep provider credentials out of version control.
 
 - [Architecture and current limitations](docs/architecture.md)
 - [Development and testing](docs/development.md)
+- [Hackathon configuration and deployment](docs/deployment.md)
 - [Integration QA, offline demo and smoke checklist](docs/qa.md)
 - [Numeric candidate extraction and review workflow](docs/development.md#extract-and-review-numeric-candidates)
 - [Four-member documentation workflow](docs/contributing.md)

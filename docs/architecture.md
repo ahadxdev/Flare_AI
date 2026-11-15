@@ -50,7 +50,8 @@ The NASA source manifest is
   measurements, staged measurement candidates, evidence excerpts, and scenario
   analyses.
 - The default SQLite file is `backend/flare_ai.sqlite3`; it is local state and
-  is git-ignored. A fresh checkout must import the starter catalog.
+  is git-ignored. A fresh checkout must import the starter catalog or enable
+  `FLARE_SEED_ON_START`, which seeds only an empty catalog from local sources.
 - Document extraction in `backend/app/document_index.py` reads only verified
   entries in `data/raw/nasa/source_manifest.json`. Preserved files are checked
   by size and SHA-256 before page extraction. Deterministic chunk IDs make
@@ -168,8 +169,9 @@ ranked matches with score breakdowns, source citations, research gaps, and
 limitations. The score is explicitly research relevance, not fire risk or
 safety certification. It does not create a PDF or other downloadable report
 file.
-The health endpoint returns API process status; it does not report database or
-LLM-provider readiness. When chat has no relevant retrieved excerpts, it
+The health endpoint returns API process status. `/api/ready` checks local
+database access and a non-empty catalog independently of external providers.
+When chat has no relevant retrieved excerpts, it
 returns `answer_status: "insufficient_evidence"` rather than inventing an
 answer.
 
@@ -197,7 +199,10 @@ detail record from the API. Scenario environment and the investigation
 `hardware` field are present in the contracts; confirm their intended role in
 ranking before changing or documenting that behavior as a requirement.
 
-No CI workflow, deployment configuration, or charting library is tracked.
+A [container deployment](deployment.md) builds and serves the production
+frontend with the API, seeds an empty local catalog, restricts JSON body size,
+and applies request deadlines. HTTP uploads are disabled. No CI workflow or
+charting library is tracked.
 The [integration QA harness](qa.md) uses Playwright against disposable backend
 databases and a visibly labelled offline demo; its known-bug gates do not change
 application contracts or scientific records.

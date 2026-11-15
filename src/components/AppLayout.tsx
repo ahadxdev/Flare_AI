@@ -108,7 +108,7 @@ export function AppLayout({
         <div className="sidebar-bottom">
           <span className={`status-dot ${health.status === "error" ? "offline" : ""}`} />
           {healthLabel}
-          <p>Student-built research tool<br />Not an official NASA system</p>
+          <p>Student-built research tool<br />Not affiliated with or endorsed by NASA</p>
         </div>
       </aside>
 

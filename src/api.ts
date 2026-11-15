@@ -278,7 +278,8 @@ export interface APIErrorDetail {
 
 export interface APIErrorResponse {
   error: {
-    code: "VALIDATION_ERROR" | "NOT_FOUND" | "NO_EVIDENCE" | "INTERNAL_ERROR";
+    code: "VALIDATION_ERROR" | "NOT_FOUND" | "NO_EVIDENCE" | "INTERNAL_ERROR"
+      | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TIMEOUT";
     message: string;
     details: APIErrorDetail[];
   };
@@ -373,38 +374,53 @@ function isMeasurementList(payload: unknown): payload is MeasurementList {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  let response: Response;
+  const controller = new AbortController();
+  // Above the backend's maximum configurable deadline (120 seconds).
+  const timeout = setTimeout(() => controller.abort(), 130_000);
   try {
-    response = await fetch(url, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
-    });
-  } catch {
-    throw new APIRequestError(
-      "Could not reach the FLARE AI API. Check the backend connection and retry.",
-      0,
-    );
-  }
-
-  const payload: unknown = await response.json().catch(() => undefined);
-  if (!response.ok) {
-    if (isErrorResponse(payload)) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json", ...init?.headers },
+      });
+    } catch {
       throw new APIRequestError(
-        payload.error.message,
-        response.status,
-        payload.error.code,
-        payload.error.details,
+        controller.signal.aborted
+          ? "The FLARE AI API request timed out. Please retry."
+          : "Could not reach the FLARE AI API. Check the backend connection and retry.",
+        0,
       );
     }
-    throw new APIRequestError(
-      `The API request failed with status ${response.status}.`,
-      response.status,
-    );
+
+    const payload: unknown = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      if (isErrorResponse(payload)) {
+        throw new APIRequestError(
+          payload.error.message,
+          response.status,
+          payload.error.code,
+          payload.error.details,
+        );
+      }
+      throw new APIRequestError(
+        `The API request failed with status ${response.status}.`,
+        response.status,
+      );
+    }
+    if (payload === undefined) {
+      throw new APIRequestError(
+        controller.signal.aborted
+          ? "The FLARE AI API response timed out. Please retry."
+          : "The API returned an unreadable response.",
+        response.status,
+      );
+    }
+    return payload as T;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (payload === undefined) {
-    throw new APIRequestError("The API returned an unreadable response.", response.status);
-  }
-  return payload as T;
 }
 
 export const api = {

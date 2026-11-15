@@ -4,8 +4,9 @@ QA scope: the browser journey and HTTP contract, including provenance and
 failure handling. Canonical fields remain defined by the
 [backend models](../backend/app/models.py), generated
 [OpenAPI contract](../api/openapi.json), and manually maintained
-[frontend interfaces](../src/api.ts). This work changes test/demo tooling and
-documentation only; it does not fix application behavior or rename fields.
+[frontend interfaces](../src/api.ts). The original QA harness changes only
+test/demo tooling; production startup, limits, health checks, and seeded
+fallback are covered separately in [Hackathon deployment](deployment.md).
 
 ## Run the checks
 

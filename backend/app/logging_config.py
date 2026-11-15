@@ -12,11 +12,10 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        for key in ("method", "path", "status_code", "duration_ms"):
+        for key in ("method", "path", "status_code", "duration_ms", "error_type"):
             if hasattr(record, key):
                 event[key] = getattr(record, key)
-        if record.exc_info:
-            event["exception"] = self.formatException(record.exc_info)
+        # Never serialize exception text/tracebacks; they can contain credentials.
         return json.dumps(event, ensure_ascii=False)
 
 

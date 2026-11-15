@@ -6,13 +6,12 @@ fetching NASA data on startup.
 
 ## Prerequisites and version note
 
-- Python 3.10 or newer is the version recommended in the README.
-- The README recommends Node.js 20 or newer. However, the current worktree
-  includes an uncommitted direct `skills` dependency whose package metadata
-  declares Node.js `>=22.20.0`; application source does not import it. Confirm
-  whether that dependency is intentional before treating Node 20 as a
-  supported install environment. The frontend build has been verified in the
-  current environment.
+- Python 3.13 is used by the deployment image; local validation used 3.13.1.
+- Node.js >=22.20.0 is required by the package manifest and its `skills`
+  dependency. Local frontend validation used Node.js 23.6.0.
+
+See [Hackathon deployment](deployment.md) for the single-origin production
+build, Docker commands, limits, health checks, and seeded fallback.
 
 Dependencies are declared in [requirements.txt](../requirements.txt),
 [requirements-dev.txt](../requirements-dev.txt), and
@@ -29,6 +28,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
+# Edit .env for development:
+# FLARE_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+# FLARE_SERVE_FRONTEND=false
 ```
 
 Start the API in terminal 1:
@@ -36,7 +38,7 @@ Start the API in terminal 1:
 ```bash
 cd backend
 python -m app.import_data ../data/psi_starter.json --replace
-uvicorn app.main:app --reload --env-file ../.env
+uvicorn app.main:app --reload --env-file ../.env --no-access-log --log-level critical
 ```
 
 Start the frontend in terminal 2, from the repository root:
@@ -79,12 +81,20 @@ variables:
 
 - `FLARE_CORS_ORIGINS`, `FLARE_CORS_ALLOW_METHODS`,
   `FLARE_CORS_ALLOW_HEADERS`, and `FLARE_CORS_ALLOW_CREDENTIALS` configure
-  browser access. Wildcard origins are rejected when credentials are enabled.
+  browser access. Origins must be exact HTTP(S) origins without paths,
+  wildcards, or embedded credentials. Set the actual deployed frontend origin
+  for hosting; the example uses a placeholder.
 - `FLARE_LOG_LEVEL` configures application logging.
 - `FLARE_DATABASE_PATH` selects the SQLite database.
+- `FLARE_SEED_ON_START=true` seeds only an empty catalog from bundled,
+  verified sources. `FLARE_SERVE_FRONTEND=true` serves a prebuilt frontend;
+  set it false when using Vite for development.
+- `FLARE_REQUEST_TIMEOUT_SECONDS` and `FLARE_MAX_REQUEST_BYTES` bound API
+  handling and JSON body size. HTTP uploads are disabled.
 - `FLARE_LLM_API_KEY`, `FLARE_LLM_MODEL`, `FLARE_LLM_BASE_URL`, and
   `FLARE_LLM_TIMEOUT_SECONDS` configure the optional OpenAI-compatible chat
   provider. Leave the key and model empty for the evidence-only fallback.
+  The provider timeout must be shorter than the API request timeout.
 
 When a provider is configured, chat sends the question and retrieved excerpts
 to that endpoint. The repository does not specify a provider data-retention or

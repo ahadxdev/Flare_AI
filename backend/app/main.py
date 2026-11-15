@@ -7,7 +7,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
+from app.bootstrap import REPOSITORY_ROOT, seed_empty_catalog
 from app.config import Settings
 from app.chat_provider import OpenAICompatibleChatProvider
 from app.errors import APIError
@@ -22,6 +24,7 @@ from app.routers import (
 )
 from app.services import ResearchService, SQLiteResearchService
 from app.store import SQLiteStore
+from app.request_limits import RequestLimitsMiddleware
 
 
 logger = logging.getLogger("flare.api")
@@ -37,6 +40,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+        if config.seed_on_start:
+            if not isinstance(research_service, SQLiteResearchService):
+                raise RuntimeError("Local demo seeding requires the SQLite research service.")
+            seed_empty_catalog(research_service.store)
         logger.info("FLARE AI API started")
         yield
         logger.info("FLARE AI API stopped")
@@ -46,8 +53,14 @@ def create_app(
         version="1.0.0",
         description=(
             "Evidence-first NASA PSI investigation discovery and research relevance "
-            "analysis. Relevance is not fire risk; missing evidence is never inferred."
+            "analysis. Relevance is not fire risk; missing evidence is never inferred. "
+            "Student-built prototype; not affiliated with or endorsed by NASA."
         ),
+        responses={
+            413: {"model": ErrorResponse, "description": "Request body is too large."},
+            415: {"model": ErrorResponse, "description": "Only JSON requests are accepted; uploads are disabled."},
+            504: {"model": ErrorResponse, "description": "Request deadline exceeded."},
+        },
         lifespan=lifespan,
     )
     if research_service is None:
@@ -65,11 +78,9 @@ def create_app(
         )
     app.state.research_service = research_service
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(config.cors_origins),
-        allow_methods=list(config.cors_methods),
-        allow_headers=list(config.cors_headers),
-        allow_credentials=config.cors_allow_credentials,
+        RequestLimitsMiddleware,
+        timeout_seconds=config.request_timeout_seconds,
+        max_bytes=config.max_request_bytes,
     )
 
     @app.middleware("http")
@@ -80,7 +91,7 @@ def create_app(
             "HTTP request completed",
             extra={
                 "method": request.method,
-                "path": request.url.path,
+                "path": getattr(request.scope.get("route"), "path", "[unmatched]"),
                 "status_code": response.status_code,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             },
@@ -144,7 +155,8 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(_: Request, exc: Exception) -> JSONResponse:
-        logger.exception("Unhandled API error", exc_info=exc)
+        # Exception text/tracebacks can contain provider credentials or user input.
+        logger.error("Unhandled API error", extra={"error_type": type(exc).__name__})
         body = ErrorResponse.model_validate(
             {
                 "error": {
@@ -161,6 +173,19 @@ def create_app(
     app.include_router(analysis_router)
     app.include_router(evidence_router)
     app.include_router(reports_router)
+    if config.serve_frontend:
+        frontend = REPOSITORY_ROOT / "dist"
+        if not (frontend / "index.html").is_file():
+            raise RuntimeError("Production frontend is missing. Run npm ci and npm run build first.")
+        # Only built public assets are served. Never mount the repository/data root.
+        app.mount("/", StaticFiles(directory=frontend, html=True, follow_symlink=False), name="frontend")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(config.cors_origins),
+        allow_methods=list(config.cors_methods),
+        allow_headers=list(config.cors_headers),
+        allow_credentials=config.cors_allow_credentials,
+    )
     return app
 
 

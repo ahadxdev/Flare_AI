@@ -50,7 +50,8 @@ ScenarioObjective = Literal[
     "general",
 ]
 ErrorCode = Literal[
-    "VALIDATION_ERROR", "NOT_FOUND", "NO_EVIDENCE", "INTERNAL_ERROR"
+    "VALIDATION_ERROR", "NOT_FOUND", "NO_EVIDENCE", "INTERNAL_ERROR",
+    "PAYLOAD_TOO_LARGE", "UNSUPPORTED_MEDIA_TYPE", "REQUEST_TIMEOUT"
 ]
 
 

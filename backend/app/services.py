@@ -602,6 +602,7 @@ class SQLiteResearchService:
             dict.fromkeys(
                 [
                     *analysis.limitations,
+                    "FLARE AI is a student-built prototype, not affiliated with or endorsed by NASA.",
                     "This report uses existing scenario analysis and indexed evidence; it does not perform new unsupported inference.",
                     "The relevance score is not fire risk, probability, or safety certification.",
                     "Microgravity evidence does not establish performance in lunar or Martian partial gravity.",
