@@ -532,7 +532,7 @@
           "reports"
         ],
         "summary": "Generate an evidence brief",
-        "description": "Builds a metadata-based brief for selected investigations and includes source references, limitations, and known research gaps.",
+        "description": "Builds an HTML or Markdown evidence brief from an existing scenario analysis, selected investigations, verified measurements, and indexed source evidence.",
         "operationId": "create_report_api_reports_post",
         "requestBody": {
           "content": {
@@ -1501,6 +1501,12 @@
       },
       "ReportRequest": {
         "properties": {
+          "scenario_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Scenario Id"
+          },
           "investigation_ids": {
             "items": {
               "type": "string"
@@ -1509,11 +1515,26 @@
             "maxItems": 10,
             "minItems": 1,
             "title": "Investigation Ids"
+          },
+          "include_measurements": {
+            "type": "boolean",
+            "title": "Include Measurements",
+            "default": true
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "html",
+              "markdown"
+            ],
+            "title": "Format",
+            "default": "html"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "scenario_id",
           "investigation_ids"
         ],
         "title": "ReportRequest"
@@ -1528,9 +1549,60 @@
             "type": "string",
             "title": "Title"
           },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "html",
+              "markdown"
+            ],
+            "title": "Format"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
           "brief": {
             "type": "string",
             "title": "Brief"
+          },
+          "scenario": {
+            "$ref": "#/components/schemas/ScenarioRequest"
+          },
+          "ranked_investigations": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioMatch"
+            },
+            "type": "array",
+            "title": "Ranked Investigations"
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/MeasurementObservation"
+            },
+            "type": "array",
+            "title": "Measurements"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCitation"
+            },
+            "type": "array",
+            "title": "Evidence"
           },
           "citations": {
             "items": {
@@ -1559,7 +1631,12 @@
         "required": [
           "report_id",
           "title",
+          "generated_at",
+          "format",
+          "content",
           "brief",
+          "scenario",
+          "ranked_investigations",
           "citations",
           "limitations",
           "research_gaps"

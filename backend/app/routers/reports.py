@@ -17,8 +17,9 @@ router = APIRouter(tags=["reports"])
     responses={**ERROR_RESPONSES},
     summary="Generate an evidence brief",
     description=(
-        "Builds a metadata-based brief for selected investigations and includes "
-        "source references, limitations, and known research gaps."
+        "Builds an HTML or Markdown evidence brief from an existing scenario "
+        "analysis, selected investigations, verified measurements, and indexed "
+        "source evidence."
     ),
 )
 def create_report(

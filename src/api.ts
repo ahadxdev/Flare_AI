@@ -244,13 +244,24 @@ export interface MeasurementList {
 }
 
 export interface ReportRequest {
+  scenario_id: string;
   investigation_ids: string[];
+  include_measurements: boolean;
+  format: "html" | "markdown";
 }
 
 export interface ReportResponse {
   report_id: string;
   title: string;
+  generated_at: string;
+  format: "html" | "markdown";
+  content: string;
   brief: string;
+  scenario: ScenarioRequest;
+  ranked_investigations: ScenarioMatch[];
+  comparison: ComparisonResponse | null;
+  measurements: Measurement[];
+  evidence: SourceCitation[];
   citations: SourceCitation[];
   limitations: string[];
   research_gaps: string[];

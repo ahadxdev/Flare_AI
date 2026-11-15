@@ -90,6 +90,7 @@ function App() {
   const [analysis, setAnalysis] = useState<ScenarioAnalysisResponse | null>(null);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [report, setReport] = useState<ReportResponse | null>(null);
+  const [includeReportMeasurements, setIncludeReportMeasurements] = useState(true);
   const [question, setQuestion] = useState("");
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [error, setError] = useState("");
@@ -397,11 +398,24 @@ function App() {
       {route === "brief" && (
         <BriefPage
           selectedIds={selectedIds}
+          scenarioId={analysis?.scenario_id ?? null}
+          includeMeasurements={includeReportMeasurements}
+          onIncludeMeasurementsChange={setIncludeReportMeasurements}
           report={report}
           busy={busy}
           onGenerate={() =>
             void run(
-              () => api.report({ investigation_ids: selectedIds }),
+              () => {
+                if (!analysis) {
+                  throw new Error("Generate a scenario analysis before creating a report.");
+                }
+                return api.report({
+                  scenario_id: analysis.scenario_id,
+                  investigation_ids: selectedIds,
+                  include_measurements: includeReportMeasurements,
+                  format: "html",
+                });
+              },
               setReport,
             )
           }
@@ -1158,12 +1172,18 @@ function AssistantPage({
 
 function BriefPage({
   selectedIds,
+  scenarioId,
+  includeMeasurements,
+  onIncludeMeasurementsChange,
   report,
   busy,
   onGenerate,
   onNavigate,
 }: {
   selectedIds: string[];
+  scenarioId: string | null;
+  includeMeasurements: boolean;
+  onIncludeMeasurementsChange: (value: boolean) => void;
   report: ReportResponse | null;
   busy: boolean;
   onGenerate: () => void;
@@ -1188,20 +1208,37 @@ function BriefPage({
           Select records in the Investigation Explorer
         </button>
       ) : (
-        <button
-          className="button primary"
-          disabled={busy}
-          onClick={onGenerate}
-        >
-          {busy ? "Generating…" : "Generate brief"}
-          <span aria-hidden="true">→</span>
-        </button>
+        <>
+          {!scenarioId && (
+            <p className="muted">Run scenario analysis before generating a report.</p>
+          )}
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={includeMeasurements}
+              onChange={(event) => onIncludeMeasurementsChange(event.target.checked)}
+            />
+            Include verified measurements
+          </label>
+          <button
+            className="button primary"
+            disabled={busy}
+            onClick={onGenerate}
+          >
+            {busy ? "Generating…" : "Generate brief"}
+            <span aria-hidden="true">→</span>
+          </button>
+        </>
       )}
       {report && (
         <div className="report-card">
           <span className="tag">EVIDENCE BRIEF</span>
           <h3>{report.title}</h3>
-          <pre>{report.brief}</pre>
+          {report.format === "html" ? (
+            <div dangerouslySetInnerHTML={{ __html: report.content }} />
+          ) : (
+            <pre>{report.content}</pre>
+          )}
           <CitationList citations={report.citations} />
           <NoticeList
             title="Limitations and research gaps"

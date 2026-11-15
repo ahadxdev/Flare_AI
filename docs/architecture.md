@@ -160,8 +160,14 @@ values, initial conditions, setup parameters, boundary conditions, simulation
 inputs, summaries, hypothetical values, and unresolved ambiguous candidates
 are excluded from the direct-observation measurements dataset.
 
-The report endpoint returns a brief string with citations, limitations, and
-research gaps. It does not create a PDF or other downloadable report file.
+The report endpoint requires an existing `scenario_id` and selected
+investigations. It reuses the saved scenario ranking, comparison output,
+verified measurements, and indexed evidence; it does not perform new
+unsupported inference. It returns deterministic HTML or Markdown content,
+ranked matches with score breakdowns, source citations, research gaps, and
+limitations. The score is explicitly research relevance, not fire risk or
+safety certification. It does not create a PDF or other downloadable report
+file.
 The health endpoint returns API process status; it does not report database or
 LLM-provider readiness. When chat has no relevant retrieved excerpts, it
 returns `answer_status: "insufficient_evidence"` rather than inventing an

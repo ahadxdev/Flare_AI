@@ -441,13 +441,24 @@ class MeasurementReviewEvent(APIModel):
 
 
 class ReportRequest(APIModel):
+    scenario_id: str = Field(min_length=1, max_length=100)
     investigation_ids: list[str] = Field(min_length=1, max_length=10)
+    include_measurements: bool = True
+    format: Literal["html", "markdown"] = "html"
 
 
 class ReportResponse(APIModel):
     report_id: str
     title: str
+    generated_at: datetime
+    format: Literal["html", "markdown"]
+    content: str
     brief: str
+    scenario: ScenarioRequest
+    ranked_investigations: list[ScenarioMatch]
+    comparison: ComparisonResponse | None = None
+    measurements: list[MeasurementObservation] = Field(default_factory=list)
+    evidence: list[SourceCitation] = Field(default_factory=list)
     citations: list[SourceCitation]
     limitations: list[str]
     research_gaps: list[str]

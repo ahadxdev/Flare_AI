@@ -87,12 +87,24 @@ def test_comparison_report_and_measurements(seeded_client: TestClient) -> None:
     assert comparison.json()["investigations"][0]["title"].startswith("TEST FIXTURE")
     assert len(comparison.json()["field_comparisons"]) == 10
 
+    scenario = seeded_client.post(
+        "/api/scenarios/analyze",
+        json={"environment": "spacecraft", "objective": "general"},
+    )
+    assert scenario.status_code == 200
     report = seeded_client.post(
         "/api/reports",
-        json={"investigation_ids": ["test-only-combustion"]},
+        json={
+            "scenario_id": scenario.json()["scenario_id"],
+            "investigation_ids": ["test-only-combustion"],
+            "include_measurements": True,
+            "format": "html",
+        },
     )
     assert report.status_code == 200
     assert report.json()["citations"][0]["source_id"] == "test-only-source"
+    assert report.json()["format"] == "html"
+    assert report.json()["content"].startswith("<article>")
 
     empty_measurements = seeded_client.get("/api/measurements").json()
     assert empty_measurements["data"] == []

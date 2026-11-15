@@ -49,6 +49,24 @@ The UI is served at `http://localhost:5173`; Vite proxies `/api` to
 `http://127.0.0.1:8000`. FastAPI's interactive docs are at
 `http://localhost:8000/docs`.
 
+To generate a report, first run scenario analysis in the UI, select one or
+more investigations, then open the brief view. The report request uses the
+saved scenario ID and can include only verified measurements:
+
+```json
+{
+  "scenario_id": "SCENARIO_ID",
+  "investigation_ids": ["psi-flex"],
+  "include_measurements": true,
+  "format": "html"
+}
+```
+
+The response contains an HTML or Markdown preview, ranked investigations,
+score breakdowns, source citations, evidence excerpts, research gaps, and
+limitations. A report ID is deterministic for the same scenario, selection,
+measurement flag, and format. PDF export is not implemented.
+
 The default SQLite database is `backend/flare_ai.sqlite3`. Its path can be
 overridden with `FLARE_DATABASE_PATH`; relative paths are resolved from the
 backend working directory. The database is local and ignored by Git.

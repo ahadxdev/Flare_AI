@@ -1,6 +1,9 @@
 import math
 import logging
 import uuid
+import hashlib
+from datetime import datetime, timezone
+from html import escape
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -525,60 +528,253 @@ class SQLiteResearchService:
         )
 
     def create_report(self, request: ReportRequest) -> ReportResponse:
+        analysis = self.store.get_scenario_analysis(request.scenario_id)
+        if analysis is None:
+            raise APIError(404, "NOT_FOUND", "The requested scenario analysis was not found.")
         items = self.store.get_investigations(request.investigation_ids)
         if len(items) != len(request.investigation_ids):
             raise APIError(404, "NOT_FOUND", "One or more investigations were not found.")
-        citations = [
-            SourceCitation(
-                source_id=source.source_id,
-                document_title=source.document_title,
-                source_url=source.source_url,
-                page_number=source.page_number,
-                section=source.section,
-                local_file_path=source.local_file_path,
-                downloaded_at=source.downloaded_at,
-                sha256=source.sha256,
-                file_size_bytes=source.file_size_bytes,
-                mime_type=source.mime_type,
-                last_verified_at=source.last_verified_at,
-                verification_status=source.verification_status,
+        matches = {match.investigation_id: match for match in analysis.matches}
+        if any(item.investigation_id not in matches for item in items):
+            raise APIError(422, "VALIDATION_ERROR", "Scenario analysis does not contain every investigation.")
+        ranked = sorted(
+            [matches[item.investigation_id] for item in items],
+            key=lambda match: (-match.relevance_score, match.investigation_id),
+        )
+        comparison = (
+            self.compare(ComparisonRequest(investigation_ids=request.investigation_ids))
+            if len(items) >= 2
+            else None
+        )
+        measurements = [
+            observation
+            for item in items
+            for observation in self.measurements(item.investigation_id, None).data
+        ] if request.include_measurements else []
+        evidence = []
+        for item in items:
+            query = " ".join([item.title, *item.findings]) or item.title
+            evidence.extend(
+                _source_citation(
+                    hit.source,
+                    hit.excerpt.excerpt,
+                    hit.excerpt.page_number,
+                    hit.excerpt.section,
+                )
+                for hit in self.store.search_evidence(
+                    query, investigation_ids=[item.investigation_id]
+                )
             )
-            for item in items
-            for source in item.sources
-        ]
-        facts = [
-            f"- {item.title} ({item.research_area}); data availability: "
-            f"{item.data_availability}."
-            for item in items
-        ]
-        gaps = []
-        if not citations:
-            gaps.append("No source records are linked to the selected investigations.")
+        citations = _unique_citations(
+            [
+                *evidence,
+                *[
+                    _source_citation(source)
+                    for item in items
+                    for source in item.sources
+                ],
+                *[citation for match in ranked for citation in match.citations],
+                *[
+                    SourceCitation(
+                        source_id=observation.source_id,
+                        document_title=observation.document_title,
+                        source_url=observation.source_url,
+                        page_number=observation.page_number,
+                        section=observation.section,
+                        quote_or_supported_excerpt=observation.supporting_excerpt,
+                    )
+                    for observation in measurements
+                ],
+            ]
+        )
+        gaps = list(dict.fromkeys([*analysis.research_gaps]))
         if any(not item.findings for item in items):
-            gaps.append("Findings are not available in indexed sources for every selection.")
-        if not self.store.measurements_for_investigations(request.investigation_ids):
-            gaps.append("Verified numeric measurements are not available for these investigations.")
+            gaps.append("Documented findings are not available for every selected investigation.")
+        if request.include_measurements and not measurements:
+            gaps.append("Verified numeric measurements are not available for the selected investigations.")
         if any(
             source.verification_status == "unavailable"
             for item in items
             for source in item.sources
         ):
             gaps.append("One or more linked source documents are unavailable locally.")
+        limitations = list(
+            dict.fromkeys(
+                [
+                    *analysis.limitations,
+                    "This report uses existing scenario analysis and indexed evidence; it does not perform new unsupported inference.",
+                    "The relevance score is not fire risk, probability, or safety certification.",
+                    "Microgravity evidence does not establish performance in lunar or Martian partial gravity.",
+                ]
+            )
+        )
+        generated_at = datetime.now(timezone.utc)
+        report_id = "report-" + hashlib.sha256(
+            "|".join(
+                [
+                    request.scenario_id,
+                    *sorted(request.investigation_ids),
+                    str(request.include_measurements),
+                    request.format,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        content = _render_report(
+            request.format, analysis, ranked, items, comparison, measurements, evidence,
+            limitations, gaps,
+        )
         return ReportResponse(
-            report_id=str(uuid.uuid4()),
+            report_id=report_id,
             title="FLARE AI evidence brief",
-            brief=(
-                "Indexed investigation metadata (not a fire-risk assessment):\n"
-                + "\n".join(facts)
-            ),
+            generated_at=generated_at,
+            format=request.format,
+            content=content,
+            brief=content,
+            scenario=analysis.scenario,
+            ranked_investigations=ranked,
+            comparison=comparison,
+            measurements=measurements,
+            evidence=evidence,
             citations=citations,
-            limitations=[
-                "This brief summarizes indexed metadata only; it does not establish fire risk or operational safety.",
-                "Citations identify source documents; no direct excerpts are indexed in this prototype.",
-                "Microgravity results must not be treated as proven performance in partial gravity.",
-            ],
+            limitations=limitations,
             research_gaps=gaps,
         )
+
+
+def _source_citation(
+    source,
+    excerpt: str | None = None,
+    page_number: int | None = None,
+    section: str | None = None,
+) -> SourceCitation:
+    return SourceCitation(
+        source_id=source.source_id,
+        document_title=source.document_title,
+        source_url=source.source_url,
+        page_number=page_number if page_number is not None else source.page_number,
+        section=section if section is not None else source.section,
+        quote_or_supported_excerpt=excerpt,
+        local_file_path=source.local_file_path,
+        downloaded_at=source.downloaded_at,
+        sha256=source.sha256,
+        file_size_bytes=source.file_size_bytes,
+        mime_type=source.mime_type,
+        last_verified_at=source.last_verified_at,
+        verification_status=source.verification_status,
+    )
+
+
+def _unique_citations(citations: list[SourceCitation]) -> list[SourceCitation]:
+    unique: dict[tuple[object, ...], SourceCitation] = {}
+    for citation in citations:
+        key = (
+            citation.source_id,
+            citation.page_number,
+            citation.section,
+            citation.quote_or_supported_excerpt,
+        )
+        unique[key] = citation
+    return list(unique.values())
+
+
+def _citation_ids(citations: list[SourceCitation]) -> str:
+    ids = list(dict.fromkeys(citation.source_id for citation in citations))
+    return " ".join(f"[{source_id}]" for source_id in ids) or "[no-source-citation]"
+
+
+def _render_report(
+    report_format: str,
+    analysis: ScenarioAnalysisResponse,
+    ranked: list[ScenarioMatch],
+    items: list[Investigation],
+    comparison,
+    measurements: list[MeasurementObservation],
+    evidence: list[SourceCitation],
+    limitations: list[str],
+    gaps: list[str],
+) -> str:
+    source_by_investigation = {
+        item.investigation_id: [
+            _source_citation(source) for source in item.sources
+        ]
+        for item in items
+    }
+    lines = [
+        "# FLARE AI evidence brief",
+        "",
+        "## Disclaimer",
+        "This report presents research relevance, not fire risk, probability, or safety certification.",
+        "",
+        "## Scenario assumptions",
+        f"- Environment: `{analysis.scenario.environment}` (user-entered hypothetical)",
+        f"- Oxygen percentage: `{analysis.scenario.oxygen_pct}` (user-entered hypothetical)",
+        f"- Pressure: `{analysis.scenario.pressure.value} {analysis.scenario.pressure.unit or ''}` (user-entered hypothetical)",
+        f"- Material or fuel: `{analysis.scenario.material_or_fuel or 'not reported'}` (user-entered hypothetical)",
+        f"- Objective: `{analysis.scenario.objective}` (user-entered hypothetical)",
+        "",
+        "## Ranked investigations",
+    ]
+    for match in ranked:
+        lines.append(
+            f"- **{match.title}**: relevance score `{match.relevance_score}`; "
+            f"breakdown `{match.score_breakdown.model_dump(exclude_none=True)}` "
+            f"{_citation_ids(match.citations or source_by_investigation[match.investigation_id])}"
+        )
+    lines.extend(["", "## Documented findings"])
+    for item in items:
+        citations_for_item = source_by_investigation[item.investigation_id]
+        if item.findings:
+            for finding in item.findings:
+                lines.append(f"- {finding} {_citation_ids(citations_for_item)}")
+        else:
+            lines.append(
+                f"- No documented findings are available for {item.title}. "
+                f"{_citation_ids(citations_for_item)}"
+            )
+    if comparison is not None:
+        lines.extend(["", "## Comparison"])
+        comparison_citations = [
+            citation
+            for item in items
+            for source in item.sources
+            for citation in [_source_citation(source)]
+        ]
+        lines.extend(
+            f"- {summary} {_citation_ids(comparison_citations)}"
+            for summary in comparison.differences_summary
+        )
+    if measurements:
+        lines.extend(["", "## Verified measurements"])
+        for measurement in measurements:
+            lines.append(
+                f"- {measurement.investigation_id}: {measurement.variable} = "
+                f"{measurement.reported_value or measurement.value} {measurement.unit} "
+                f"[{measurement.source_id}]"
+            )
+    elif analysis.scenario_id:
+        lines.extend(["", "## Verified measurements", "- No verified measurements were requested or available."])
+    lines.extend(["", "## Retrieved evidence"])
+    if evidence:
+        lines.extend(
+            f'- "{citation.quote_or_supported_excerpt}" {_citation_ids([citation])}'
+            for citation in evidence
+            if citation.quote_or_supported_excerpt
+        )
+    else:
+        lines.append("- No indexed evidence excerpts were retrieved.")
+    lines.extend(["", "## Research gaps"])
+    lines.extend(f"- {gap}" for gap in gaps)
+    lines.extend(["", "## Limitations"])
+    lines.extend(f"- {limitation}" for limitation in limitations)
+    markdown = "\n".join(lines)
+    if report_format == "markdown":
+        return markdown
+    return "<article>" + "".join(
+        f"<p>{escape(line)}</p>" if line and not line.startswith("#") else
+        f"<h{min(len(line) - len(line.lstrip('#')), 3)}>{escape(line.lstrip('#').strip())}</h{min(len(line) - len(line.lstrip('#')), 3)}>"
+        if line.startswith("#") else "<br>"
+        for line in markdown.splitlines()
+    ) + "</article>"
 
 
 def _citation_section(hit: EvidenceHit) -> str | None:
