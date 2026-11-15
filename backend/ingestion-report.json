@@ -1,0 +1,37 @@
+{
+  "archived_files": [],
+  "duplicate_investigations": [],
+  "duplicate_sources": [],
+  "evidence_excerpts_read": 0,
+  "evidence_excerpts_written": 422,
+  "indexing_issues": [
+    {
+      "message": "Page 6: no extractable text; OCR is not configured.",
+      "record": "src-ntrs-flex-results"
+    },
+    {
+      "message": "Page 24: no extractable text; OCR is not configured.",
+      "record": "src-ntrs-flex-results"
+    },
+    {
+      "message": "Page 312: no extractable text; OCR is not configured.",
+      "record": "src-ntrs-flex-results"
+    },
+    {
+      "message": "Page 313: no extractable text; OCR is not configured.",
+      "record": "src-ntrs-flex-results"
+    },
+    {
+      "message": "Page 314: no extractable text; OCR is not configured.",
+      "record": "src-ntrs-flex-results"
+    }
+  ],
+  "input_files": [
+    "..\\data\\psi_starter.json"
+  ],
+  "investigations_read": 4,
+  "investigations_written": 4,
+  "issues": [],
+  "measurements_read": 0,
+  "measurements_written": 0
+}

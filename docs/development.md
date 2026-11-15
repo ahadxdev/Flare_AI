@@ -94,6 +94,24 @@ local PDF and NASA metadata files are checked against recorded size and
 SHA-256 before extraction. Original source files are preserved; the importer
 does not scrape PSI.
 
+## Rebuild the NASA document index
+
+The document index reads only sources listed as `verified` in
+`data/raw/nasa/source_manifest.json`. It verifies each preserved file's size and
+SHA-256 before extracting page text, then stores deterministic chunks with their
+investigation, source, document, URL, page, and section metadata. Rebuilding
+replaces only the derived evidence index; canonical investigations and
+measurements are not modified:
+
+```bash
+python -m app.document_index --repository-root .. --database ./flare_ai.sqlite3
+```
+
+Each run is idempotent. Blank or scanned PDF pages are reported as OCR-required
+and are not indexed; the project does not silently OCR or invent text. Chat
+retrieval applies the optional investigation and research-area filters before
+ranking the remaining source excerpts with deterministic local similarity.
+
 ## Extract and review numeric candidates
 
 The measurement pipeline scans only locally preserved sources whose records

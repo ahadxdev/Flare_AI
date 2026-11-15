@@ -194,6 +194,7 @@ export interface ChatRequest {
   question: string;
   scenario_id?: string | null;
   investigation_ids?: string[];
+  research_area?: ResearchArea | null;
 }
 
 export interface ChatEvidence {

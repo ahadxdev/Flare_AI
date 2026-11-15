@@ -285,6 +285,7 @@ class SQLiteResearchService:
         hits = self.store.search_evidence(
             request.question,
             investigation_ids=allowed_ids,
+            research_area=request.research_area,
         )
         if not hits:
             unavailable_sources = any(

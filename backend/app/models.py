@@ -247,6 +247,7 @@ class ChatRequest(APIModel):
     question: str = Field(min_length=1, max_length=4000)
     scenario_id: str | None = Field(default=None, min_length=1, max_length=100)
     investigation_ids: list[str] = Field(default_factory=list, max_length=5)
+    research_area: ResearchArea | None = None
 
     @field_validator("investigation_ids")
     @classmethod

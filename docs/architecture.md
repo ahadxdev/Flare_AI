@@ -51,10 +51,15 @@ The NASA source manifest is
   analyses.
 - The default SQLite file is `backend/flare_ai.sqlite3`; it is local state and
   is git-ignored. A fresh checkout must import the starter catalog.
-- Evidence search uses SQLite FTS5. It selects up to 12 terms from the user
-  question, joins terms with OR, ranks excerpts with BM25, and returns at most
-  eight hits by default. This is lexical retrieval; no vector database or
-  embedding model is configured in the current implementation.
+- Document extraction in `backend/app/document_index.py` reads only verified
+  entries in `data/raw/nasa/source_manifest.json`. Preserved files are checked
+  by size and SHA-256 before page extraction. Deterministic chunk IDs make
+  rebuilds idempotent; blank or scanned pages are reported as OCR-required and
+  are not silently OCR'd.
+- Evidence search applies optional investigation and research-area filters,
+  then ranks indexed excerpts with deterministic local term-vector cosine
+  similarity and returns at most eight hits by default. Each hit retains source,
+  investigation, document, URL, page, and section metadata.
 - When configured, the OpenAI-compatible provider receives the question and
   retrieved evidence. If it is unconfigured or fails, the service returns an
   evidence-only response. Citations are built from retrieved records and are

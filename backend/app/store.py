@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sqlite3
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,37 @@ _SEARCH_STOPWORDS = {
     "which",
     "with",
 }
+
+
+def _semantic_similarity(query: str, text: str) -> float:
+    """Rank local evidence with deterministic term-vector cosine similarity."""
+    query_terms = [
+        term
+        for term in re.findall(r"[a-z0-9]{2,}", query.casefold())
+        if term not in _SEARCH_STOPWORDS
+    ]
+    text_terms = [
+        term
+        for term in re.findall(r"[a-z0-9]{2,}", text.casefold())
+        if term not in _SEARCH_STOPWORDS
+    ]
+    if not query_terms or not text_terms:
+        return 0.0
+    query_counts = {term: query_terms.count(term) for term in set(query_terms)}
+    text_counts = {term: text_terms.count(term) for term in set(text_terms)}
+    vocabulary = set(query_counts) | set(text_counts)
+    query_norm = math.sqrt(
+        sum((query_counts.get(term, 0) ** 2) for term in vocabulary)
+    )
+    text_norm = math.sqrt(
+        sum((text_counts.get(term, 0) ** 2) for term in vocabulary)
+    )
+    if query_norm == 0 or text_norm == 0:
+        return 0.0
+    return sum(
+        query_counts.get(term, 0) * text_counts.get(term, 0)
+        for term in vocabulary
+    ) / (query_norm * text_norm)
 
 
 def _append_audit_note(existing: str | None, correction: str) -> str:
@@ -939,6 +971,7 @@ class SQLiteStore:
         self,
         query: str,
         investigation_ids: list[str] | None = None,
+        research_area: str | None = None,
         limit: int = 8,
     ) -> list[EvidenceHit]:
         terms = [
@@ -948,30 +981,42 @@ class SQLiteStore:
         ][:12]
         if not terms or investigation_ids == []:
             return []
-        match_query = " OR ".join(f'"{term}"' for term in terms)
-        clauses = ["evidence_search MATCH ?"]
-        parameters: list[object] = [match_query]
+        clauses = []
+        parameters: list[object] = []
         if investigation_ids is not None:
             placeholders = ",".join("?" for _ in investigation_ids)
             clauses.append(f"evidence_excerpts.investigation_id IN ({placeholders})")
             parameters.extend(investigation_ids)
+        if research_area is not None:
+            clauses.append(
+                "json_extract(investigations.payload, '$.research_area') = ?"
+            )
+            parameters.append(research_area)
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT evidence_excerpts.payload FROM evidence_search "
-                "JOIN evidence_excerpts USING (excerpt_id) WHERE "
-                + " AND ".join(clauses)
-                + " ORDER BY bm25(evidence_search) LIMIT ?",
-                [*parameters, limit],
+                "SELECT evidence_excerpts.payload FROM evidence_excerpts "
+                "JOIN investigations USING (investigation_id) "
+                + ("WHERE " + " AND ".join(clauses) if clauses else ""),
+                parameters,
             ).fetchall()
         excerpts = [
             EvidenceExcerpt.model_validate_json(row["payload"]) for row in rows
         ]
+        ranked = [
+            excerpt
+            for excerpt in sorted(
+                excerpts,
+                key=lambda item: _semantic_similarity(query, item.excerpt),
+                reverse=True,
+            )
+            if _semantic_similarity(query, excerpt.excerpt) > 0
+        ][:limit]
         investigations = self.get_investigations(
-            list(dict.fromkeys(item.investigation_id for item in excerpts))
+            list(dict.fromkeys(item.investigation_id for item in ranked))
         )
         by_id = {item.investigation_id: item for item in investigations}
         hits: list[EvidenceHit] = []
-        for excerpt in excerpts:
+        for excerpt in ranked:
             investigation = by_id.get(excerpt.investigation_id)
             if investigation is None:
                 continue
@@ -1092,6 +1137,40 @@ class SQLiteStore:
                 "VALUES (?, ?, ?, ?) ON CONFLICT(excerpt_id) DO UPDATE SET "
                 "investigation_id = excluded.investigation_id, "
                 "source_id = excluded.source_id, payload = excluded.payload",
+                [
+                    (
+                        item.excerpt_id,
+                        item.investigation_id,
+                        item.source_id,
+                        item.model_dump_json(),
+                    )
+                    for item in evidence_excerpts
+                ],
+            )
+
+    def replace_evidence_index(self, evidence_excerpts: list[EvidenceExcerpt]) -> None:
+        """Replace only the derived document index; canonical records remain unchanged."""
+        investigations, _ = self.list_investigations(page_size=1_000_000)
+        known_ids = {item.investigation_id for item in investigations}
+        sources = {
+            (item.investigation_id, source.source_id)
+            for item in investigations
+            for source in item.sources
+        }
+        if any(item.investigation_id not in known_ids for item in evidence_excerpts):
+            raise ValueError("Every evidence excerpt must reference an indexed investigation.")
+        if any(
+            (item.investigation_id, item.source_id) not in sources
+            for item in evidence_excerpts
+        ):
+            raise ValueError("Every evidence excerpt must cite a source for its investigation.")
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM evidence_excerpts WHERE excerpt_id LIKE 'excerpt-%'"
+            )
+            connection.executemany(
+                "INSERT INTO evidence_excerpts"
+                "(excerpt_id, investigation_id, source_id, payload) VALUES (?, ?, ?, ?)",
                 [
                     (
                         item.excerpt_id,

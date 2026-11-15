@@ -678,6 +678,25 @@
             "type": "array",
             "maxItems": 5,
             "title": "Investigation Ids"
+          },
+          "research_area": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "prevention",
+                  "detection",
+                  "suppression",
+                  "fundamentals",
+                  "related",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Area"
           }
         },
         "additionalProperties": false,

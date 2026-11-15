@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -28,8 +29,10 @@ class VerifiedSourcePage:
 def index_verified_sources(
     investigations: list[Investigation],
     repository_root: str | Path,
+    manifest_path: str | Path | None = None,
 ) -> tuple[list[EvidenceExcerpt], list[IngestionIssue]]:
     root = Path(repository_root).resolve()
+    approved = _approved_sources(root, manifest_path)
     pages_by_path: dict[Path, list[tuple[int | None, str | None, str]]] = {}
     excerpts: list[EvidenceExcerpt] = []
     issues: list[IngestionIssue] = []
@@ -37,6 +40,25 @@ def index_verified_sources(
     for investigation in investigations:
         for source in investigation.sources:
             if source.verification_status != "verified" or not source.local_file_path:
+                continue
+            manifest_entry = approved.get(source.source_id)
+            if manifest_entry is None:
+                issues.append(
+                    IngestionIssue(
+                        source.source_id,
+                        "Source is not approved by the NASA source manifest; it was not indexed.",
+                    )
+                )
+                continue
+            if investigation.investigation_id not in manifest_entry.get(
+                "investigation_ids", []
+            ):
+                issues.append(
+                    IngestionIssue(
+                        source.source_id,
+                        "Manifest does not associate this source with the investigation; it was not indexed.",
+                    )
+                )
                 continue
             path = (root / source.local_file_path).resolve()
             try:
@@ -51,7 +73,27 @@ def index_verified_sources(
                 continue
             if path not in pages_by_path:
                 try:
-                    pages_by_path[path] = read_verified_source(path, source)
+                    pages: list[tuple[int | None, str | None, str]] = []
+                    for page in iter_verified_source_pages(
+                        path, source, include_empty_pages=True
+                    ):
+                        if page.error:
+                            issues.append(
+                                IngestionIssue(
+                                    source.source_id,
+                                    f"Page {page.page_number}: {page.error}",
+                                )
+                            )
+                        elif page.text.strip():
+                            pages.append((page.page_number, page.section, page.text))
+                        else:
+                            issues.append(
+                                IngestionIssue(
+                                    source.source_id,
+                                    f"Page {page.page_number}: no extractable text; OCR is not configured.",
+                                )
+                            )
+                    pages_by_path[path] = pages
                 except (OSError, ValueError, PdfReadError, json.JSONDecodeError) as exc:
                     issues.append(IngestionIssue(source.source_id, str(exc)))
                     continue
@@ -81,6 +123,27 @@ def index_verified_sources(
                         )
                     )
     return excerpts, issues
+
+
+def _approved_sources(
+    repository_root: Path, manifest_path: str | Path | None
+) -> dict[str, dict]:
+    path = Path(manifest_path) if manifest_path else repository_root / "data/raw/nasa/source_manifest.json"
+    if not path.is_absolute():
+        path = (repository_root / path).resolve()
+    if not path.is_file():
+        raise ValueError(f"Approved NASA source manifest does not exist: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = payload.get("sources") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise ValueError("Approved NASA source manifest must contain a sources array.")
+    return {
+        entry["source_id"]: entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("source_id"), str)
+        and entry.get("verification_status") == "verified"
+    }
 
 
 def read_verified_source(
@@ -159,6 +222,13 @@ def iter_verified_source_pages(
                 continue
             if text.strip() or include_empty_pages:
                 yield VerifiedSourcePage(page_number, None, text)
+            elif not include_empty_pages:
+                yield VerifiedSourcePage(
+                    page_number,
+                    None,
+                    "",
+                    "No extractable text; OCR is not configured for scanned pages.",
+                )
         return
 
     if source.mime_type == "application/json":
@@ -211,3 +281,28 @@ def _chunks(text: str) -> Iterable[str]:
         if end == len(normalized):
             break
         position = max(position + 1, end - _CHUNK_OVERLAP)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Rebuild the approved NASA evidence index.")
+    parser.add_argument("--database", help="SQLite database path.")
+    parser.add_argument("--repository-root", default=".", help="FLARE AI repository root.")
+    parser.add_argument(
+        "--manifest",
+        help="Approved source manifest path (defaults to data/raw/nasa/source_manifest.json).",
+    )
+    args = parser.parse_args()
+    from app.store import SQLiteStore
+
+    root = Path(args.repository_root).resolve()
+    store = SQLiteStore(args.database)
+    investigations, _ = store.list_investigations(page_size=1_000_000)
+    excerpts, issues = index_verified_sources(investigations, root, args.manifest)
+    store.replace_evidence_index(excerpts)
+    print(f"Indexed {len(excerpts)} evidence chunks.")
+    for issue in issues:
+        print(f"WARNING {issue.record}: {issue.message}")
+
+
+if __name__ == "__main__":
+    main()
